@@ -5,10 +5,18 @@
   "type": "module",
   "main": "src/main.ts",
   "scripts": {
-    "test": "node --import tsx --test src/domain/*.test.ts",
+    "start": "tsx src/main.ts",
+    "start:dev": "tsx watch src/main.ts",
+    "test": "node --import tsx --test src/domain/*.test.ts src/persistence/*.test.ts src/checkout/*.test.ts",
+    "test:unit": "node --import tsx --test src/domain/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@sam-store/contracts": "*"
+    "@nestjs/common": "^11.0.0",
+    "@nestjs/core": "^11.0.0",
+    "@nestjs/platform-express": "^11.0.0",
+    "@sam-store/contracts": "*",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1"
   }
 }

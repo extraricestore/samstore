@@ -95,8 +95,8 @@ model Store {
   name         String
   description  String?
   logoUrl      String?
-  currencyCode String      @default("USD") // per-store currency; open question pending operator
-  timezone     String      @default("Asia/Kuala_Lumpur") // placeholder; see docs/progress.md open Q1
+  currencyCode  String      @default("PHP") // operator decision 2026-09-01: Philippines → PHP
+  timezone      String      @default("Asia/Manila") // operator decision 2026-09-01
   status       StoreStatus @default(ACTIVE)
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
@@ -266,7 +266,8 @@ model Order {
   snapshot             Json // immutable product names/SKUs/prices at purchase; catalog edits never change history
   paymentMethod        String        @default("cod")
   paymentStatus        PaymentStatus @default(PENDING)
-  idempotencyKey       String?       @unique // sha256 per apps/api/src/domain/idempotency.ts
+  idempotencyKey      String?       @unique // sha256 per apps/api/src/domain/idempotency.ts
+  cartToken           String // bound for idempotent retries; mismatch on retry is rejected
   customerName         String
   customerPhone        String
   deliveryAddressLine1 String
