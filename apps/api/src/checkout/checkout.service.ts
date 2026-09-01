@@ -96,17 +96,16 @@ export class CheckoutService {
     }
 
     // 5. Re-price against live catalog (inventory + price changes)
+    const freshProducts = await this.catalog.getProductsByIds(
+      cart.storeId,
+      cart.lines.map((l) => l.productId),
+    );
     let revalidated;
     try {
       revalidated = revalidateCartLines(
         cart.lines,
         new Map(
-          (
-            await this.catalog.getProductsByIds(
-              cart.storeId,
-              cart.lines.map((l) => l.productId),
-            )
-          ).map((p) => [p.id, { id: p.id, priceMinor: p.priceMinor, isActive: p.isActive }]),
+          freshProducts.map((p) => [p.id, { id: p.id, priceMinor: p.priceMinor, isActive: p.isActive }]),
         ),
       );
     } catch (e) {
@@ -149,7 +148,20 @@ export class CheckoutService {
     const seq = await this.sequences.nextOrderSequence(store.id);
     const orderNumber = formatOrderNumber(store.slug, seq);
 
-    // 8. Persist order with immutable snapshot + claim token (persisted so an
+    // 8. Immutable line items (names/SKUs snapshot at purchase time)
+    const items = revalidated.lines.map((line) => {
+      const product = freshProducts.find((p) => p.id === line.productId);
+      return {
+        productId: product?.id ?? null,
+        productName: product?.name ?? "Unknown product",
+        sku: product?.sku ?? "UNKNOWN",
+        unitPriceMinor: line.unitPriceMinor,
+        quantity: line.quantity,
+        lineTotalMinor: line.unitPriceMinor * line.quantity,
+      };
+    });
+
+    // 9. Persist order with immutable snapshot + claim token (persisted so an
     //    idempotent retry after a lost response can return the SAME token).
     const id = randomId();
     const claimToken = signClaimToken(id, this.claimSecret);
@@ -165,6 +177,7 @@ export class CheckoutService {
       totalMinor: totals.totalMinor,
       snapshot: {
         lines: revalidated.lines,
+        items,
         priceChanges: revalidated.priceChanges,
         store: { slug: store.slug, name: store.name },
         paymentMethod: "cod",
@@ -181,6 +194,7 @@ export class CheckoutService {
       deliverySchedule: request.deliverySchedule?.trim() ?? null,
       notes: request.notes?.trim() ?? null,
       claimToken,
+      items,
       createdAt: new Date(),
     };
     const created = await this.orders.create(order);

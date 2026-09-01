@@ -69,6 +69,14 @@ export interface OrderRecord {
   deliverySchedule: string | null;
   notes: string | null;
   claimToken: string | null;
+  items: {
+    productId: string | null;
+    productName: string;
+    sku: string;
+    unitPriceMinor: number;
+    quantity: number;
+    lineTotalMinor: number;
+  }[];
   createdAt: Date;
 }
 
