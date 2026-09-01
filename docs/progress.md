@@ -7,7 +7,19 @@ Updated: 2026-09-01 (Module 1 loop 1) · Active model: `deepseek/deepseek-v4-fla
 | # | Module | Status | Model used | Fallback fired? | Tests | Known defects | Next task |
 |---|--------|--------|-----------|-----------------|-------|---------------|-----------|
 | 0 | Setup: analysis, v2 prompt, AGENTS.md, progress.md | ✅ Done | deepseek-v4-flash-0731 | No | n/a | — | — |
-| 1 | Thin slice foundations | 🚧 In progress | deepseek-v4-flash-0731 | No | **41/41 pass** | see below | NestJS wiring + migrations + storefront (blocked on DATABASE_URL) |
+| 1 | Thin slice foundations | 🚧 In progress | deepseek-v4-flash-0731 | No | **59/59 + live HTTP smoke** | see below | Prisma-backed repos + migrations (blocked on DATABASE_URL) |
+
+## Module 1 — loop 2 completed (all verified, real output)
+
+1. **NestJS HTTP layer** — `POST /public/checkout` wired via explicit `CHECKOUT_SERVICE` DI token (class-token DI fails under NodeNext/ESM; documented). Bootstrap via `tsx src/main.ts`.
+2. **Checkout orchestration** (`src/checkout/checkout.service.ts`) — validation → idempotency-first → cart/OPEN → store ACTIVE/paused → re-price → totals → min-order → store-scoped sequence → order + snapshot → claim token → cart CONVERTED.
+3. **Claim-token domain** — HMAC-signed single-use tokens; token now **persisted** so an idempotent retry after a lost response returns the SAME token (was: empty string — bug found by smoke test).
+4. **Real HTTP statuses** — controller now throws `HttpException` (was: 201 for everything, status only in body — bug found by smoke test).
+5. **In-memory repositories** behind interfaces — Prisma implementations swap in without service changes. `SEED_DEMO=true` seeds a demo store/product/cart for local smoke tests.
+6. **Live HTTP smoke test** (real curl, port 4100): 201 + order PHP 290.00 + claim token → same-key retry returns SAME order + SAME token → converted-cart 409 → invalid input 422. ✅
+7. Schema gained `Order.cartToken` (binds idempotent retries to the cart — prevents claim-token leak via key reuse).
+
+Commits: `32dce58` (loop 2).
 
 ## Module 1 — completed this loop (all verified, real output)
 
