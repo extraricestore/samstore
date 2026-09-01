@@ -1,0 +1,388 @@
+// SAM STORE — Prisma schema (Thin Slice + roles/tenancy day one)
+// Rule from AGENTS.md: EVERY store-owned table carries store_id.
+// Money is stored as integer minor units (cents) — never floats.
+// Naming: camelCase fields (Prisma), no @map; revisit with a dedicated mapping pass.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────── Enums ───────────────────────────────
+
+enum StoreStatus {
+  ACTIVE
+  SUSPENDED
+  ARCHIVED
+  CLOSED
+}
+
+enum LinkStatus {
+  ACTIVE
+  REVOKED
+  ROTATED
+}
+
+enum CartStatus {
+  OPEN
+  CONVERTED
+  ABANDONED
+  EXPIRED
+}
+
+enum OrderStatus {
+  RECEIVED
+  CONFIRMED
+  PREPARING
+  READY
+  OUT_FOR_DELIVERY
+  DELIVERED
+  CANCELLED
+  FAILED_DELIVERY
+}
+
+enum PaymentStatus {
+  PENDING // COD: awaiting collection at delivery
+  COLLECTED // COD: collected
+  CANCELLED_REFUND // unused in slice; reserved
+}
+
+enum PlatformRole {
+  PLATFORM_ADMIN
+}
+
+enum StoreRole {
+  OWNER
+  MANAGER
+  STAFF
+  SALES_AGENT
+}
+
+enum MembershipStatus {
+  PENDING
+  ACTIVE
+  DEACTIVATED
+}
+
+enum CustomerApprovalStatus {
+  NOT_REQUIRED
+  PENDING
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+// ─────────────────────────────── Tenancy / platform ───────────────────────────────
+
+model PlatformUser {
+  id           String       @id @default(cuid())
+  email        String       @unique
+  passwordHash String
+  role         PlatformRole @default(PLATFORM_ADMIN)
+  mfaEnabled   Boolean      @default(false)
+  isActive     Boolean      @default(true)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+}
+
+model Store {
+  id           String      @id @default(cuid())
+  slug         String      @unique
+  name         String
+  description  String?
+  logoUrl      String?
+  currencyCode String      @default("USD") // per-store currency; open question pending operator
+  timezone     String      @default("Asia/Kuala_Lumpur") // placeholder; see docs/progress.md open Q1
+  status       StoreStatus @default(ACTIVE)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  settings       StoreSettings?
+  publicLink     PublicStoreLink?
+  categories     Category[]
+  products       Product[]
+  stockLevels    StockLevel[]
+  productImages  ProductImage[]
+  carts          Cart[]
+  orders         Order[]
+  storeCustomers StoreCustomer[]
+  memberships    StoreMembership[]
+  counters       StoreCounter[]
+  auditLogs      AuditLog[]
+}
+
+model StoreSettings {
+  id                       String   @id @default(cuid())
+  storeId                  String   @unique
+  store                    Store    @relation(fields: [storeId], references: [id])
+  allowGuestOrders         Boolean  @default(true)
+  requireCustomerApproval  Boolean  @default(false)
+  orderingPaused           Boolean  @default(false)
+  minOrderAmountMinor      Int      @default(0)
+  orderCutoff              String? // e.g. "21:00" store-local; parsed by app
+  maxOpenOrdersPerCustomer Int      @default(10)
+  deliveryEnabled          Boolean  @default(true)
+  pickupEnabled            Boolean  @default(false)
+  deliveryFeeMinor         Int      @default(0)
+  closedStoreMessage       String?
+  createdAt                DateTime @default(now())
+  updatedAt                DateTime @updatedAt
+}
+
+model PublicStoreLink {
+  id        String     @id @default(cuid())
+  storeId   String     @unique
+  store     Store      @relation(fields: [storeId], references: [id])
+  slug      String     @unique // human-readable
+  token     String     @unique // high-entropy, generated at app layer
+  status    LinkStatus @default(ACTIVE)
+  createdAt DateTime   @default(now())
+  rotatedAt DateTime?
+  revokedAt DateTime?
+}
+
+model StoreCounter {
+  id      String @id @default(cuid())
+  storeId String
+  store   Store  @relation(fields: [storeId], references: [id])
+  kind    String // "ORDER_SEQ"
+  value   Int    @default(0)
+
+  @@unique([storeId, kind])
+}
+
+// ─────────────────────────────── Catalog ───────────────────────────────
+
+model Category {
+  id        String   @id @default(cuid())
+  storeId   String
+  store     Store    @relation(fields: [storeId], references: [id])
+  name      String
+  slug      String
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  products Product[]
+
+  @@unique([storeId, slug])
+}
+
+model Product {
+  id          String    @id @default(cuid())
+  storeId     String
+  store       Store     @relation(fields: [storeId], references: [id])
+  categoryId  String?
+  category    Category? @relation(fields: [categoryId], references: [id])
+  sku         String
+  name        String
+  description String?
+  priceMinor  Int // integer minor units; NEVER float
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  images     ProductImage[]
+  stockLevel StockLevel?
+  cartItems  CartItem[]
+  orderItems OrderItem[]
+
+  @@unique([storeId, sku])
+}
+
+model ProductImage {
+  id        String  @id @default(cuid())
+  storeId   String
+  store     Store   @relation(fields: [storeId], references: [id])
+  productId String
+  product   Product @relation(fields: [productId], references: [id])
+  url       String
+  sortOrder Int     @default(0)
+}
+
+model StockLevel {
+  id               String   @id @default(cuid())
+  storeId          String
+  store            Store    @relation(fields: [storeId], references: [id])
+  productId        String   @unique
+  product          Product  @relation(fields: [productId], references: [id])
+  quantityOnHand   Int      @default(0)
+  quantityReserved Int      @default(0)
+  reorderThreshold Int      @default(0)
+  updatedAt        DateTime @updatedAt
+
+  @@index([storeId, productId])
+}
+
+// ─────────────────────────────── Cart ───────────────────────────────
+
+model Cart {
+  id         String     @id @default(cuid())
+  storeId    String
+  store      Store      @relation(fields: [storeId], references: [id])
+  token      String     @unique // high-entropy guest cart token
+  customerId String? // linked customer once accounts exist
+  status     CartStatus @default(OPEN)
+  expiresAt  DateTime?
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  items CartItem[]
+}
+
+model CartItem {
+  id             String   @id @default(cuid())
+  cartId         String
+  cart           Cart     @relation(fields: [cartId], references: [id])
+  storeId        String
+  productId      String
+  product        Product  @relation(fields: [productId], references: [id])
+  quantity       Int
+  unitPriceMinor Int // snapshot at add-time; revalidated at checkout per AGENTS.md
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([cartId, productId])
+}
+
+// ─────────────────────────────── Orders ───────────────────────────────
+
+model Order {
+  id                   String        @id @default(cuid())
+  orderNumber          String        @unique // store-scoped human-readable, e.g. SAMSTO-000001
+  storeId              String
+  store                Store         @relation(fields: [storeId], references: [id])
+  status               OrderStatus   @default(RECEIVED)
+  currencyCode         String
+  subtotalMinor        Int
+  deliveryFeeMinor     Int           @default(0)
+  discountMinor        Int           @default(0)
+  totalMinor           Int
+  snapshot             Json // immutable product names/SKUs/prices at purchase; catalog edits never change history
+  paymentMethod        String        @default("cod")
+  paymentStatus        PaymentStatus @default(PENDING)
+  idempotencyKey       String?       @unique // sha256 per apps/api/src/domain/idempotency.ts
+  customerName         String
+  customerPhone        String
+  deliveryAddressLine1 String
+  deliveryAddressLine2 String?
+  landmark             String?
+  deliverySchedule     String? // requested date/time window, free-form for slice
+  notes                String?
+  acknowledgedAt       DateTime?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  items         OrderItem[]
+  statusHistory OrderStatusHistory[]
+  claimTokens   OrderClaimToken[]
+
+  @@index([storeId, status, createdAt])
+}
+
+model OrderItem {
+  id             String   @id @default(cuid())
+  orderId        String
+  order          Order    @relation(fields: [orderId], references: [id])
+  storeId        String
+  productId      String? // kept as ref; name/sku/price are snapshot columns
+  product        Product? @relation(fields: [productId], references: [id])
+  productName    String
+  sku            String
+  unitPriceMinor Int
+  quantity       Int
+  lineTotalMinor Int // unitPriceMinor * quantity, server-computed
+}
+
+model OrderStatusHistory {
+  id         String       @id @default(cuid())
+  orderId    String
+  order      Order        @relation(fields: [orderId], references: [id])
+  storeId    String
+  fromStatus OrderStatus?
+  toStatus   OrderStatus
+  reason     String? // required for manual overrides
+  actorType  String // platform_admin | store_owner | staff | sales_agent | system
+  actorId    String?
+  createdAt  DateTime     @default(now())
+
+  @@index([orderId, createdAt])
+}
+
+model OrderClaimToken {
+  id        String    @id @default(cuid())
+  orderId   String
+  order     Order     @relation(fields: [orderId], references: [id])
+  storeId   String
+  token     String    @unique // single-use, HMAC-signed at app layer
+  usedAt    DateTime?
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+}
+
+// ─────────────────────────────── Customers / membership (roles) ───────────────────────────────
+
+model Customer {
+  id        String   @id @default(cuid())
+  email     String?
+  phone     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  storeProfiles StoreCustomer[] @relation("GlobalToStore")
+
+  @@unique([email, phone])
+}
+
+model StoreCustomer {
+  id                  String                 @id @default(cuid())
+  storeId             String
+  store               Store                  @relation(fields: [storeId], references: [id])
+  customerId          String
+  customer            Customer               @relation("GlobalToStore", fields: [customerId], references: [id])
+  approvalStatus      CustomerApprovalStatus @default(NOT_REQUIRED)
+  loyaltyBalanceMinor Int                    @default(0) // reserved for loyalty module
+  createdAt           DateTime               @default(now())
+  updatedAt           DateTime               @updatedAt
+
+  @@unique([storeId, customerId])
+}
+
+model StoreMembership {
+  id             String           @id @default(cuid())
+  storeId        String
+  store          Store            @relation(fields: [storeId], references: [id])
+  platformUserId String? // set on acceptance
+  email          String
+  displayName    String
+  role           StoreRole
+  status         MembershipStatus @default(PENDING)
+  invitedAt      DateTime         @default(now())
+  acceptedAt     DateTime?
+  deactivatedAt  DateTime?
+
+  @@unique([storeId, email])
+}
+
+// ─────────────────────────────── Audit ───────────────────────────────
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  storeId    String? // null = platform-level event
+  store      Store?   @relation(fields: [storeId], references: [id])
+  actorType  String // platform_admin | store_owner | staff | sales_agent | system | customer
+  actorId    String?
+  action     String
+  entityType String
+  entityId   String
+  before     Json?
+  after      Json?
+  createdAt  DateTime @default(now())
+
+  @@index([storeId, entityType, entityId, createdAt])
+}
