@@ -7,6 +7,9 @@ import { CartService, CART_SERVICE } from "./cart/cart.service.js";
 import { AuthController } from "./auth/auth.controller.js";
 import { AuthService, AUTH_SERVICE } from "./auth/auth.service.js";
 import { PrismaAuthRepository } from "./auth/auth.repository.js";
+import { AdminController } from "./admin/admin.controller.js";
+import { JwtAuthGuard } from "./auth/auth.guard.js";
+import type { AuthConfig } from "./auth/auth.domain.js";
 import {
   PrismaStoreRepository,
   PrismaCatalogRepository,
@@ -18,7 +21,7 @@ import {
 const CLAIM_SECRET = process.env.CLAIM_SIGNING_SECRET ?? "dev-only-in-memory-secret-0123456789";
 
 @Module({
-  controllers: [CheckoutController, PublicStoreController, CartController, AuthController],
+  controllers: [CheckoutController, PublicStoreController, CartController, AuthController, AdminController],
   providers: [
     {
       provide: AUTH_SERVICE,
@@ -28,13 +31,14 @@ const CLAIM_SECRET = process.env.CLAIM_SIGNING_SECRET ?? "dev-only-in-memory-sec
           {
             jwtSecret: process.env.JWT_SECRET ?? "dev-jwt-secret-change-me-0123456789",
             jwtExpiresIn: "7d",
-          },
+          } as AuthConfig,
         ),
     },
     {
       provide: "AUTH_CONFIG",
       useValue: { jwtSecret: process.env.JWT_SECRET ?? "dev-jwt-secret-change-me-0123456789" },
     },
+    JwtAuthGuard,
     {
       provide: CART_SERVICE,
       useFactory: () => new CartService(new PrismaCartRepository(), new PrismaCatalogRepository()),

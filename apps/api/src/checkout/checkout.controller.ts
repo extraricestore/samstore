@@ -13,6 +13,8 @@ function httpStatusFor(error: ApiError): HttpStatus {
       return HttpStatus.NOT_FOUND; // 404
     case "forbidden":
       return HttpStatus.FORBIDDEN; // 403
+    case "unauthorized":
+      return HttpStatus.UNAUTHORIZED; // 401
     case "rate_limited":
       return HttpStatus.TOO_MANY_REQUESTS; // 429
     case "conflict":

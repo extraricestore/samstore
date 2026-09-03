@@ -23,6 +23,8 @@ function statusFor(error: ApiError): HttpStatus {
       return HttpStatus.CONFLICT;
     case "forbidden":
       return HttpStatus.FORBIDDEN;
+    case "unauthorized":
+      return HttpStatus.UNAUTHORIZED;
     case "rate_limited":
       return HttpStatus.TOO_MANY_REQUESTS;
   }
