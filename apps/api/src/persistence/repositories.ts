@@ -62,6 +62,7 @@ export interface OrderRecord {
   paymentStatus: string;
   idempotencyKey: string;
   cartToken: string;
+  storeCustomerId?: string | null;
   customerName: string;
   customerPhone: string;
   deliveryAddressLine1: string;

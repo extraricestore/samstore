@@ -32,6 +32,15 @@ export interface VoucherGateway {
   redeem(orderId: string, storeId: string, voucherId: string): Promise<void>;
 }
 
+/** Optional loyalty integration. */
+export interface LoyaltyGateway {
+  ensureProfile(storeId: string, customerId: string): Promise<{ storeCustomerId: string }>;
+  redeem(storeId: string, customerId: string, points: number, orderTotalMinor: number): Promise<
+    { ok: true; discountMinor: number; storeCustomerId: string } | { ok: false; message: string }
+  >;
+  recordRedemption(orderId: string, storeId: string, customerId: string, storeCustomerId: string, points: number): Promise<void>;
+}
+
 /** DI token — explicit, so dependency resolution doesn't rely on emitDecoratorMetadata. */
 export const CHECKOUT_SERVICE = Symbol("CHECKOUT_SERVICE");
 
@@ -45,6 +54,8 @@ export class CheckoutService {
     private readonly claimSecret: string,
     private readonly onOrderPlaced?: (order: OrderRecord) => Promise<void>,
     private readonly voucher?: VoucherGateway,
+    private readonly loyalty?: LoyaltyGateway,
+    private readonly resolveCustomer?: (customerToken: string) => Promise<string | null>,
   ) {}
 
   async checkout(request: CheckoutRequest): Promise<CheckoutResult> {
@@ -103,6 +114,24 @@ export class CheckoutService {
           message: store.closedStoreMessage ?? "Store is not accepting orders right now",
         },
       };
+    }
+
+    // 4b. Optional customer account: resolve token → customer, ensure per-store profile.
+    let customerId: string | null = null;
+    let storeCustomerId: string | null = null;
+    if (request.customerToken) {
+      if (!this.resolveCustomer) {
+        return { ok: false, error: { type: "unauthorized", message: "Customer accounts are unavailable" } };
+      }
+      customerId = await this.resolveCustomer(request.customerToken);
+      if (!customerId) {
+        return { ok: false, error: { type: "unauthorized", message: "Invalid customer token" } };
+      }
+      if (!this.loyalty) {
+        return { ok: false, error: { type: "conflict", message: "Loyalty is unavailable" } };
+      }
+      const profile = await this.loyalty.ensureProfile(store.id, customerId);
+      storeCustomerId = profile.storeCustomerId;
     }
 
     // 5. Re-price against live catalog (inventory + price changes)
@@ -165,6 +194,18 @@ export class CheckoutService {
       discountMinor = Math.min(voucherResult.discountMinor, totals.totalMinor);
       voucherId = voucherResult.voucherId;
     }
+
+    // 6c. Loyalty redemption (optional): points → discount.
+    let loyaltyPoints = 0;
+    if (request.loyaltyPoints && customerId && this.loyalty) {
+      const remaining = totals.totalMinor - discountMinor;
+      const redeemResult = await this.loyalty.redeem(store.id, customerId, request.loyaltyPoints, remaining);
+      if (!redeemResult.ok) {
+        return { ok: false, error: { type: "conflict", message: redeemResult.message } };
+      }
+      loyaltyPoints = request.loyaltyPoints;
+      discountMinor += redeemResult.discountMinor;
+    }
     const finalTotal = totals.totalMinor - discountMinor;
 
     // 7. Order number from store-scoped sequence
@@ -205,6 +246,7 @@ export class CheckoutService {
         store: { slug: store.slug, name: store.name },
         paymentMethod: "cod",
         ...(request.voucherCode ? { voucherCode: request.voucherCode.toUpperCase(), discountMinor } : {}),
+        ...(loyaltyPoints > 0 ? { loyaltyPointsRedeemed: loyaltyPoints } : {}),
       },
       paymentMethod: "cod",
       paymentStatus: "PENDING",
@@ -219,6 +261,7 @@ export class CheckoutService {
       notes: request.notes?.trim() ?? null,
       claimToken,
       items,
+      storeCustomerId,
       createdAt: new Date(),
     };
     const created = await this.orders.create(order);
@@ -229,6 +272,11 @@ export class CheckoutService {
     // 9b. Record voucher redemption (after the order exists — a failed checkout never consumes it).
     if (voucherId) {
       await this.voucher!.redeem(created.id, store.id, voucherId);
+    }
+
+    // 9c. Record loyalty redemption (after order exists).
+    if (loyaltyPoints > 0 && customerId && storeCustomerId && this.loyalty) {
+      await this.loyalty.recordRedemption(created.id, store.id, customerId, storeCustomerId, loyaltyPoints);
     }
 
     // 10. Post-order notification hook (Messenger bridge — suppressed until a store is connected)

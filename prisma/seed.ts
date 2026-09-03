@@ -4,10 +4,32 @@
 
 import { PrismaClient } from "@prisma/client";
 import { randomUUID } from "node:crypto";
+import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
 async function main() {
+  // Platform admin (demo) — public registration is restricted to STORE_OWNER, so this is seeded.
+  const adminEmail = "platform@samstore.test";
+  const existingAdmin = await prisma.user.findUnique({ where: { email: adminEmail } });
+  if (existingAdmin) {
+    // Ensure the seeded admin always has the platform role + known password.
+    await prisma.user.update({
+      where: { email: adminEmail },
+      data: { role: "PLATFORM_ADMIN", passwordHash: await bcrypt.hash("platform-pass-123", 12) },
+    });
+  } else {
+    await prisma.user.create({
+      data: {
+        email: adminEmail,
+        passwordHash: await bcrypt.hash("platform-pass-123", 12),
+        name: "Platform Admin",
+        role: "PLATFORM_ADMIN",
+      },
+    });
+    console.log("  platform admin: platform@samstore.test / platform-pass-123");
+  }
+
   const store = await prisma.store.upsert({
     where: { slug: "sam-store" },
     update: {},

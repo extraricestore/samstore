@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { API_URL } from "../../config";
-import { getAdminToken } from "../../lib/admin";
+import { getAdminToken, adminHeaders } from "../../lib/admin";
 
 interface Voucher {
   id: string;
@@ -26,7 +26,7 @@ export default function VouchersPanel() {
     setLoading(true);
     try {
       const res = await fetch(`${API_URL}/admin/vouchers`, {
-        headers: { Authorization: `Bearer ${getAdminToken()}` },
+        headers: { ...adminHeaders() },
       });
       if (!res.ok) throw new Error("Failed to load vouchers");
       const data = await res.json();
@@ -47,7 +47,7 @@ export default function VouchersPanel() {
     try {
       const res = await fetch(`${API_URL}/admin/vouchers`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getAdminToken()}` },
+        headers: { "Content-Type": "application/json", ...adminHeaders() },
         body: JSON.stringify({
           code: form.code,
           discountMinor: Math.round(parseFloat(form.discountPesos || "0") * 100),
@@ -71,7 +71,7 @@ export default function VouchersPanel() {
   const toggle = async (v: Voucher) => {
     await fetch(`${API_URL}/admin/vouchers/${v.id}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${getAdminToken()}` },
+      headers: { "Content-Type": "application/json", ...adminHeaders() },
       body: JSON.stringify({ isActive: !v.isActive }),
     });
     await load();

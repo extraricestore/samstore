@@ -10,12 +10,13 @@ class InMemoryAuthRepo implements AuthRepository {
   async findByEmail(email: string): Promise<AuthUserRecord | null> {
     return this.users.get(email.toLowerCase()) ?? null;
   }
-  async createUser(email: string, passwordHash: string, name: string | null): Promise<AuthUserRecord> {
+  async createUser(email: string, passwordHash: string, name: string | null, role: string): Promise<AuthUserRecord> {
     const user: AuthUserRecord = {
       id: randomUUID(),
       email: email.toLowerCase(),
       passwordHash,
       name,
+      role,
       memberships: [],
     };
     this.users.set(user.email, user);
@@ -60,7 +61,7 @@ test("register rejects duplicate email", async () => {
 test("login succeeds with correct password and fails with wrong", async () => {
   const { svc, repo } = makeService();
   const hash = await hashPassword("correct-horse");
-  repo.seed({ id: "u1", email: "staff@store.com", passwordHash: hash, name: "Staff", memberships: [{ storeId: "s1", role: "STAFF" }] });
+  repo.seed({ id: "u1", email: "staff@store.com", passwordHash: hash, name: "Staff", role: "STAFF", memberships: [{ storeId: "s1", role: "STAFF" }] });
   const ok = await svc.login({ email: "staff@store.com", password: "correct-horse" });
   assert.equal(ok.ok, true);
   if (!ok.ok) return;

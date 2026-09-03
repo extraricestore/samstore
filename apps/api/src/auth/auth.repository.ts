@@ -8,6 +8,7 @@ export interface AuthUserRecord {
   email: string;
   passwordHash: string;
   name: string | null;
+  role: string;
   /** store memberships: storeId + role */
   memberships: { storeId: string; role: string }[];
 }
@@ -18,6 +19,7 @@ export interface AuthRepository {
     email: string,
     passwordHash: string,
     name: string | null,
+    role: string,
     storeBinding?: { storeId: string; role: string },
   ): Promise<AuthUserRecord>;
 }
@@ -34,6 +36,7 @@ export class PrismaAuthRepository implements AuthRepository {
       email: u.email,
       passwordHash: u.passwordHash,
       name: u.name,
+      role: u.role ?? "STORE_OWNER",
       memberships: u.memberships.map((m) => ({ storeId: m.storeId, role: m.role })),
     };
   }
@@ -42,6 +45,7 @@ export class PrismaAuthRepository implements AuthRepository {
     email: string,
     passwordHash: string,
     name: string | null,
+    role: string,
     storeBinding?: { storeId: string; role: string },
   ): Promise<AuthUserRecord> {
     const u = await prisma.user.create({
@@ -49,6 +53,7 @@ export class PrismaAuthRepository implements AuthRepository {
         email: email.toLowerCase(),
         passwordHash,
         name,
+        role,
         ...(storeBinding
           ? {
               memberships: {
@@ -64,6 +69,7 @@ export class PrismaAuthRepository implements AuthRepository {
       email: u.email,
       passwordHash: u.passwordHash,
       name: u.name,
+      role: u.role,
       memberships: u.memberships.map((m) => ({ storeId: m.storeId, role: m.role })),
     };
   }

@@ -271,6 +271,7 @@ export class PrismaOrderRepository implements OrderRepository {
       deliverySchedule: o.deliverySchedule,
       notes: o.notes,
       claimToken: liveClaim?.token ?? null,
+      storeCustomerId: o.storeCustomerId ?? null,
       items: o.items,
       createdAt: o.createdAt,
     };
@@ -301,6 +302,7 @@ export class PrismaOrderRepository implements OrderRepository {
           landmark: order.landmark,
           deliverySchedule: order.deliverySchedule,
           notes: order.notes,
+          storeCustomerId: order.storeCustomerId ?? undefined,
         },
       });
 

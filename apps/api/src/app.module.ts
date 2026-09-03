@@ -14,6 +14,10 @@ import { MessengerService, SuppressedMessengerProvider } from "./messenger/messe
 import { OrderLookupService, ORDER_LOOKUP_SERVICE } from "./orders/order-lookup.service.js";
 import { OrderLookupController } from "./orders/order-lookup.controller.js";
 import { VoucherPublicService } from "./voucher/voucher-public.service.js";
+import { CustomerAuthService, CUSTOMER_AUTH_SERVICE } from "./auth/customer-auth.service.js";
+import { CustomerAuthController } from "./auth/customer-auth.controller.js";
+import { LoyaltyService, LOYALTY_SERVICE } from "./loyalty/loyalty.service.js";
+import { verifyToken } from "./auth/auth.domain.js";
 import {
   PrismaStoreRepository,
   PrismaCatalogRepository,
@@ -25,8 +29,20 @@ import {
 const CLAIM_SECRET = process.env.CLAIM_SIGNING_SECRET ?? "dev-only-in-memory-secret-0123456789";
 
 @Module({
-  controllers: [CheckoutController, PublicStoreController, CartController, AuthController, AdminController, OrderLookupController],
+  controllers: [CheckoutController, PublicStoreController, CartController, AuthController, AdminController, OrderLookupController, CustomerAuthController],
   providers: [
+    {
+      provide: CUSTOMER_AUTH_SERVICE,
+      useFactory: () =>
+        new CustomerAuthService({
+          jwtSecret: process.env.JWT_SECRET ?? "dev-jwt-secret-change-me-0123456789",
+          jwtExpiresIn: "30d",
+        }),
+    },
+    {
+      provide: LOYALTY_SERVICE,
+      useFactory: () => new LoyaltyService(),
+    },
     {
       provide: ORDER_LOOKUP_SERVICE,
       useFactory: () => new OrderLookupService(CLAIM_SECRET),
@@ -64,8 +80,8 @@ const CLAIM_SECRET = process.env.CLAIM_SIGNING_SECRET ?? "dev-only-in-memory-sec
       // CheckoutService is framework-free by design (tests construct it directly).
       // Prisma-backed repositories hit the real Postgres (Supabase).
       provide: CHECKOUT_SERVICE,
-      inject: ["MESSENGER_SERVICE", "VOUCHER_PUBLIC_SERVICE"],
-      useFactory: (messenger: MessengerService, voucher: VoucherPublicService) =>
+      inject: ["MESSENGER_SERVICE", "VOUCHER_PUBLIC_SERVICE", LOYALTY_SERVICE],
+      useFactory: (messenger: MessengerService, voucher: VoucherPublicService, loyalty: LoyaltyService) =>
         new CheckoutService(
           new PrismaStoreRepository(),
           new PrismaCatalogRepository(),
@@ -82,6 +98,19 @@ const CLAIM_SECRET = process.env.CLAIM_SIGNING_SECRET ?? "dev-only-in-memory-sec
             });
           },
           voucher, // VoucherGateway — validate + redeem at checkout
+          loyalty, // LoyaltyGateway — ensure profile, redeem, record
+          async (customerToken: string) => {
+            // Resolve a customer JWT to a customer id (role must be CUSTOMER).
+            try {
+              const decoded = verifyToken(customerToken, {
+                jwtSecret: process.env.JWT_SECRET ?? "dev-jwt-secret-change-me-0123456789",
+                jwtExpiresIn: "30d",
+              });
+              return decoded.role === "CUSTOMER" ? decoded.sub : null;
+            } catch {
+              return null;
+            }
+          },
         ),
     },
   ],

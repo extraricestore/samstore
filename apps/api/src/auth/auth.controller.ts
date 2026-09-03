@@ -30,12 +30,15 @@ function statusFor(error: ApiError): HttpStatus {
 export class AuthController {
   constructor(@Inject(AUTH_SERVICE) private readonly auth: AuthService) {}
 
-  /** POST /auth/register — create a user with an optional store binding */
+  /**
+   * POST /auth/register — create a user.
+   * Public registration is restricted to STORE_OWNER (platform admins are seeded).
+   */
   @Post("register")
   async register(
-    @Body() body: { email: string; password: string; name?: string; storeId?: string; role?: string },
+    @Body() body: { email: string; password: string; name?: string; storeId?: string },
   ) {
-    const r = await this.auth.register(body);
+    const r = await this.auth.register({ ...body, role: "STORE_OWNER" });
     if (!r.ok) throw new HttpException(r.error, statusFor(r.error));
     return r.value;
   }

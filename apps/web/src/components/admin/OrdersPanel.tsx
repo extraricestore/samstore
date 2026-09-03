@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { API_URL } from "../../config";
-import { getAdminToken, type AdminOrder } from "../../lib/admin";
+import { adminHeaders, type AdminOrder } from "../../lib/admin";
 
 const ALLOWED: Record<string, string[]> = {
   RECEIVED: ["CONFIRMED", "CANCELLED"],
@@ -38,7 +38,7 @@ export default function OrdersPanel() {
     setLoading(true);
     try {
       const res = await fetch(`${API_URL}/admin/orders`, {
-        headers: { Authorization: `Bearer ${getAdminToken()}` },
+        headers: { ...adminHeaders() },
       });
       if (!res.ok) throw new Error("Failed to load orders");
       const data = await res.json();
@@ -66,7 +66,7 @@ export default function OrdersPanel() {
     try {
       const res = await fetch(`${API_URL}/admin/orders/${orderId}/status`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getAdminToken()}` },
+        headers: { "Content-Type": "application/json", ...adminHeaders() },
         body: JSON.stringify({ toStatus, reason: reasonText }),
       });
       const data = await res.json();

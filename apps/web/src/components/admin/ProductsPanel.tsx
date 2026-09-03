@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { API_URL } from "../../config";
-import { getAdminToken } from "../../lib/admin";
+import { getAdminToken, adminHeaders } from "../../lib/admin";
 
 export interface AdminProduct {
   id: string;
@@ -45,8 +45,8 @@ export default function ProductsPanel() {
     setError(null);
     try {
       const [pRes, cRes] = await Promise.all([
-        fetch(`${API_URL}/admin/products`, { headers: { Authorization: `Bearer ${token()}` } }),
-        fetch(`${API_URL}/admin/products/categories`, { headers: { Authorization: `Bearer ${token()}` } }),
+        fetch(`${API_URL}/admin/products`, { headers: adminHeaders() }),
+                fetch(`${API_URL}/admin/products/categories`, { headers: adminHeaders() }),
       ]);
       if (!pRes.ok) throw new Error("Failed to load products");
       const p = await pRes.json();
@@ -97,8 +97,8 @@ export default function ProductsPanel() {
         `${API_URL}/admin/products${modal.editing ? `/${modal.editing.id}` : ""}`,
         {
           method: modal.editing ? "PATCH" : "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
-          body: JSON.stringify(payload),
+          headers: { "Content-Type": "application/json", ...adminHeaders() },
+                    body: JSON.stringify(payload),
         },
       );
       const data = await res.json();
@@ -118,8 +118,8 @@ export default function ProductsPanel() {
   const toggleActive = async (p: AdminProduct) => {
     await fetch(`${API_URL}/admin/products/${p.id}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token()}` },
-      body: JSON.stringify({ isActive: !p.isActive }),
+      headers: { "Content-Type": "application/json", ...adminHeaders() },
+            body: JSON.stringify({ isActive: !p.isActive }),
     });
     await load();
   };

@@ -2,6 +2,7 @@
 
 import { prisma } from "../persistence/prisma-repositories.js";
 import { assertTransition, paymentEffectFor, type OrderState } from "../domain/order-state.js";
+import { LoyaltyService } from "../loyalty/loyalty.service.js";
 import type { ApiError } from "@sam-store/contracts";
 
 export type AdminResult<T> = { ok: true; value: T } | { ok: false; error: ApiError };
@@ -48,7 +49,18 @@ export class OrderAdminService {
       });
     });
 
+    // Loyalty: award points when the order is delivered (and linked to a customer).
+    if (toStatus === "DELIVERED") {
+      await this.awardLoyalty(orderId);
+    }
+
     return { ok: true, value: { id: orderId, status: toStatus } };
+  }
+
+  /** Award loyalty points for a delivered order (idempotent via LoyaltyEntry). */
+  private async awardLoyalty(orderId: string): Promise<void> {
+    const loyalty = new LoyaltyService();
+    await loyalty.earnForDeliveredOrder(orderId);
   }
 
   /** Order detail with items + history (for the admin). */

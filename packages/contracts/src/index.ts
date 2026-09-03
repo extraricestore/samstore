@@ -117,6 +117,10 @@ export interface CheckoutRequest {
   idempotencyKey: string;
   /** optional voucher code to apply at checkout */
   voucherCode?: string;
+  /** optional customer account JWT (earns/redeems loyalty) */
+  customerToken?: string;
+  /** optional loyalty points to redeem (requires customerToken) */
+  loyaltyPoints?: number;
 }
 
 export interface CheckoutResponse {

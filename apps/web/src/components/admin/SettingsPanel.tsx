@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { API_URL } from "../../config";
-import { getAdminToken } from "../../lib/admin";
+import { getAdminToken, adminHeaders } from "../../lib/admin";
 
 interface StoreSettings {
   id: string;
@@ -47,7 +47,7 @@ export default function SettingsPanel() {
     setLoading(true);
     try {
       const res = await fetch(`${API_URL}/admin/settings`, {
-        headers: { Authorization: `Bearer ${getAdminToken()}` },
+        headers: { ...adminHeaders() },
       });
       if (!res.ok) throw new Error("Failed to load settings");
       const d = (await res.json()) as StoreSettings;
@@ -80,7 +80,7 @@ export default function SettingsPanel() {
     try {
       const res = await fetch(`${API_URL}/admin/settings`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${getAdminToken()}` },
+        headers: { "Content-Type": "application/json", ...adminHeaders() },
         body: JSON.stringify({
           allowGuestOrders: allowGuest,
           orderingPaused: paused,

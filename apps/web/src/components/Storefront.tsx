@@ -6,6 +6,7 @@ import ProductCard from "../components/ProductCard";
 import CartDrawer, { type CartLineUI } from "../components/CartDrawer";
 import CheckoutForm from "../components/CheckoutForm";
 import OrderTracker from "../components/OrderTracker";
+import { CustomerAccount } from "../components/CustomerAccount";
 import {
   ensureCartToken,
   getStoredCartToken,
@@ -30,6 +31,7 @@ export default function Storefront({ store, products }: StorefrontProps) {
   const [lines, setLines] = useState<CartLineUI[]>([]);
   const [cartError, setCartError] = useState<string | null>(null);
   const [lastOrder, setLastOrder] = useState<CheckoutResponse | null>(null);
+  const [accountOpen, setAccountOpen] = useState(false);
 
   const productById = useCallback(
     () => new Map(products.map((p) => [p.id, p])),
@@ -118,14 +120,19 @@ export default function Storefront({ store, products }: StorefrontProps) {
           <span className="navbar-brand fw-semibold">
             <i className="bi bi-shop me-2"></i>{store.name}
           </span>
-          <button className="btn btn-outline-light position-relative" onClick={() => setCartOpen(true)}>
-            <i className="bi bi-cart3 me-1"></i>Cart
-            {cartCount > 0 && (
-              <span className="badge rounded-pill bg-primary position-absolute top-0 start-100 translate-middle">
-                {cartCount}
-              </span>
-            )}
-          </button>
+          <div className="d-flex align-items-center gap-2">
+            <button className="btn btn-outline-light btn-sm" onClick={() => setAccountOpen((v) => !v)}>
+              <i className="bi bi-person me-1"></i>Account
+            </button>
+            <button className="btn btn-outline-light position-relative" onClick={() => setCartOpen(true)}>
+              <i className="bi bi-cart3 me-1"></i>Cart
+              {cartCount > 0 && (
+                <span className="badge rounded-pill bg-primary position-absolute top-0 start-100 translate-middle">
+                  {cartCount}
+                </span>
+              )}
+            </button>
+          </div>
         </div>
       </nav>
 
@@ -144,6 +151,11 @@ export default function Storefront({ store, products }: StorefrontProps) {
 
       {/* Body */}
       <main className="container py-4">
+        {accountOpen && (
+          <div className="mb-4" style={{ maxWidth: 420 }}>
+            <CustomerAccount />
+          </div>
+        )}
         {cartError && (
           <div className="alert alert-danger py-2 small">{cartError}</div>
         )}

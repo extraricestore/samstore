@@ -23,6 +23,7 @@ export default function CheckoutForm({ cartToken, deliveryFeeMinor, totalMinor, 
     deliverySchedule: "",
     notes: "",
     voucherCode: "",
+    loyaltyPoints: "",
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -39,10 +40,20 @@ export default function CheckoutForm({ cartToken, deliveryFeeMinor, totalMinor, 
         typeof crypto !== "undefined" && "randomUUID" in crypto
           ? crypto.randomUUID()
           : `ck-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const customerToken =
+        typeof window !== "undefined" ? localStorage.getItem("samstore.customer.token") : null;
       const res = await fetch("/api/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, cartToken, paymentMethod: "cod", idempotencyKey, voucherCode: form.voucherCode.trim() || undefined }),
+        body: JSON.stringify({
+          ...form,
+          cartToken,
+          paymentMethod: "cod",
+          idempotencyKey,
+          voucherCode: form.voucherCode.trim() || undefined,
+          customerToken: customerToken ?? undefined,
+          loyaltyPoints: form.loyaltyPoints ? parseInt(form.loyaltyPoints, 10) : undefined,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -94,6 +105,10 @@ export default function CheckoutForm({ cartToken, deliveryFeeMinor, totalMinor, 
         <div className="mb-3">
           <label className="form-label small">Voucher code</label>
           <input className="form-control" value={form.voucherCode} onChange={set("voucherCode")} placeholder="e.g. SAM10 (optional)" />
+        </div>
+        <div className="mb-3">
+          <label className="form-label small">Redeem loyalty points (100 pts = ₱1)</label>
+          <input className="form-control" type="number" min="0" step="100" value={form.loyaltyPoints} onChange={set("loyaltyPoints")} placeholder="e.g. 200 (optional)" />
         </div>
 
         <div className="d-flex justify-content-between align-items-center mb-3">

@@ -11,6 +11,8 @@ export const AUTH_SERVICE = Symbol("AUTH_SERVICE");
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+export const ALLOWED_ROLES = ["STORE_OWNER", "PLATFORM_ADMIN", "MANAGER", "STAFF", "SALES_AGENT"] as const;
+
 export class AuthService {
   constructor(
     private readonly repo: AuthRepository,
@@ -31,6 +33,10 @@ export class AuthService {
     if (!input.password || input.password.length < 8) {
       return { ok: false, error: { type: "validation", errors: ["Password must be at least 8 characters"] } };
     }
+    const role = input.role ?? "STORE_OWNER";
+    if (!(ALLOWED_ROLES as readonly string[]).includes(role)) {
+      return { ok: false, error: { type: "validation", errors: [`Unknown role: ${role}`] } };
+    }
 
     const existing = await this.repo.findByEmail(email);
     if (existing) return { ok: false, error: { type: "conflict", message: "Email already registered" } };
@@ -40,13 +46,14 @@ export class AuthService {
       email,
       passwordHash,
       input.name ?? null,
-      input.storeId ? { storeId: input.storeId, role: input.role ?? "STORE_OWNER" } : undefined,
+      role,
+      input.storeId ? { storeId: input.storeId, role: "OWNER" } : undefined,
     );
 
     const token = signToken(
       {
         sub: user.id,
-        role: input.role ?? "STORE_OWNER",
+        role: user.role,
         email: user.email,
         storeId: input.storeId ?? undefined,
       },
@@ -71,7 +78,7 @@ export class AuthService {
     const token = signToken(
       {
         sub: user.id,
-        role: user.memberships[0]?.role ?? "STORE_OWNER",
+        role: user.role,
         email: user.email,
         storeId: user.memberships[0]?.storeId,
       },

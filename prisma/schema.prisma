@@ -96,6 +96,7 @@ model User {
   email        String   @unique
   passwordHash String
   name         String?
+  role         String   @default("STORE_OWNER") // STORE_OWNER | PLATFORM_ADMIN | MANAGER | STAFF | SALES_AGENT
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -141,6 +142,7 @@ model Store {
   counters       StoreCounter[]
   auditLogs      AuditLog[]
   vouchers       Voucher[]
+  loyaltyEntries LoyaltyEntry[]
 }
 
 model StoreSettings {
@@ -278,6 +280,32 @@ model CartItem {
   @@unique([cartId, productId])
 }
 
+// ─────────────────────────────── Loyalty ───────────────────────────────
+
+enum LoyaltyEntryType {
+  EARN
+  REDEEM
+}
+
+model LoyaltyEntry {
+  id              String           @id @default(cuid())
+  storeId         String
+  store           Store            @relation(fields: [storeId], references: [id])
+  customerId      String
+  customer        Customer         @relation(fields: [customerId], references: [id])
+  storeCustomerId String
+  storeCustomer   StoreCustomer    @relation(fields: [storeCustomerId], references: [id])
+  type            LoyaltyEntryType
+  points          Int // positive for EARN, negative for REDEEM
+  balanceAfter    Int
+  orderId         String?
+  description     String
+  createdAt       DateTime         @default(now())
+  order           Order?           @relation(fields: [orderId], references: [id])
+
+  @@index([storeCustomerId, createdAt])
+}
+
 // ─────────────────────────────── Orders ───────────────────────────────
 
 // ─────────────────────────────── Vouchers / promotions ───────────────────────────────
@@ -342,10 +370,13 @@ model Order {
   createdAt            DateTime      @default(now())
   updatedAt            DateTime      @updatedAt
 
-  items         OrderItem[]
-  statusHistory OrderStatusHistory[]
-  redemptions   VoucherRedemption[]
-  claimTokens   OrderClaimToken[]
+  items           OrderItem[]
+  statusHistory   OrderStatusHistory[]
+  redemptions     VoucherRedemption[]
+  claimTokens     OrderClaimToken[]
+  storeCustomerId String? // linked customer account (optional, guests = null)
+  storeCustomer   StoreCustomer?       @relation(fields: [storeCustomerId], references: [id])
+  loyaltyEntries  LoyaltyEntry[]
 
   @@index([storeId, status, createdAt])
 }
@@ -393,27 +424,33 @@ model OrderClaimToken {
 // ─────────────────────────────── Customers / membership (roles) ───────────────────────────────
 
 model Customer {
-  id        String   @id @default(cuid())
-  email     String?
-  phone     String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String   @id @default(cuid())
+  email        String?
+  phone        String?
+  passwordHash String?
+  name         String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
-  storeProfiles StoreCustomer[] @relation("GlobalToStore")
+  storeProfiles  StoreCustomer[] @relation("GlobalToStore")
+  loyaltyEntries LoyaltyEntry[]
 
   @@unique([email, phone])
 }
 
 model StoreCustomer {
-  id                  String                 @id @default(cuid())
-  storeId             String
-  store               Store                  @relation(fields: [storeId], references: [id])
-  customerId          String
-  customer            Customer               @relation("GlobalToStore", fields: [customerId], references: [id])
-  approvalStatus      CustomerApprovalStatus @default(NOT_REQUIRED)
-  loyaltyBalanceMinor Int                    @default(0) // reserved for loyalty module
-  createdAt           DateTime               @default(now())
-  updatedAt           DateTime               @updatedAt
+  id                   String                 @id @default(cuid())
+  storeId              String
+  store                Store                  @relation(fields: [storeId], references: [id])
+  customerId           String
+  customer             Customer               @relation("GlobalToStore", fields: [customerId], references: [id])
+  approvalStatus       CustomerApprovalStatus @default(NOT_REQUIRED)
+  loyaltyBalancePoints Int                    @default(0) // loyalty points balance (per-store)
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @updatedAt
+
+  orders  Order[]
+  loyalty LoyaltyEntry[]
 
   @@unique([storeId, customerId])
 }
