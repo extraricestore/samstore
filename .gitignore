@@ -23,7 +23,4 @@ Thumbs.db
 # coverage
 coverage/
 
-# stray legacy landing page (unrelated to SAM STORE)
-/index.html
-/assets/
 *.tsbuildinfo
