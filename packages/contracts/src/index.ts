@@ -159,6 +159,7 @@ export type ApiError =
   | { type: "not_found"; message: string }
   | { type: "conflict"; message: string }
   | { type: "forbidden"; message: string }
+  | { type: "unauthorized"; message: string }
   | { type: "rate_limited"; message: string };
 
 export const PAYMENT_METHODS = ["cod"] as const;

@@ -86,7 +86,33 @@ model PlatformUser {
   mfaEnabled   Boolean      @default(false)
   isActive     Boolean      @default(true)
   createdAt    DateTime     @default(now())
-  updatedAt    DateTime     @updatedAt
+  updatedAt    DateTime    @updatedAt
+}
+
+// ─────────────────────────────── Users / auth ───────────────────────────────
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships UserStore[]
+}
+
+model UserStore {
+  id        String           @id @default(cuid())
+  userId    String
+  user      User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storeId   String
+  store     Store            @relation(fields: [storeId], references: [id])
+  role      StoreRole
+  status    MembershipStatus @default(ACTIVE)
+  createdAt DateTime         @default(now())
+
+  @@unique([userId, storeId])
 }
 
 model Store {
@@ -111,6 +137,7 @@ model Store {
   orders         Order[]
   storeCustomers StoreCustomer[]
   memberships    StoreMembership[]
+  userStores     UserStore[]
   counters       StoreCounter[]
   auditLogs      AuditLog[]
 }
