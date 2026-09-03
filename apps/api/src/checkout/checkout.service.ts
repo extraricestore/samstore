@@ -35,6 +35,7 @@ export class CheckoutService {
     private readonly orders: OrderRepository,
     private readonly sequences: OrderSequenceRepository,
     private readonly claimSecret: string,
+    private readonly onOrderPlaced?: (order: OrderRecord) => Promise<void>,
   ) {}
 
   async checkout(request: CheckoutRequest): Promise<CheckoutResult> {
@@ -201,6 +202,11 @@ export class CheckoutService {
 
     // 9. Cart is spent
     await this.carts.save({ ...cart, status: "CONVERTED" });
+
+    // 10. Post-order notification hook (Messenger bridge — suppressed until a store is connected)
+    if (this.onOrderPlaced) {
+      await this.onOrderPlaced(created);
+    }
 
     return {
       ok: true,

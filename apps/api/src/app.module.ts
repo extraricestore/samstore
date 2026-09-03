@@ -10,6 +10,7 @@ import { PrismaAuthRepository } from "./auth/auth.repository.js";
 import { AdminController } from "./admin/admin.controller.js";
 import { JwtAuthGuard } from "./auth/auth.guard.js";
 import type { AuthConfig } from "./auth/auth.domain.js";
+import { MessengerService, SuppressedMessengerProvider } from "./messenger/messenger.adapter.js";
 import {
   PrismaStoreRepository,
   PrismaCatalogRepository,
@@ -44,10 +45,15 @@ const CLAIM_SECRET = process.env.CLAIM_SIGNING_SECRET ?? "dev-only-in-memory-sec
       useFactory: () => new CartService(new PrismaCartRepository(), new PrismaCatalogRepository()),
     },
     {
+      provide: "MESSENGER_SERVICE",
+      // No store is connected yet → all sends suppressed (spec-mandated default).
+      useFactory: () => new MessengerService(new SuppressedMessengerProvider(), () => false),
+    },
+    {
       // CheckoutService is framework-free by design (tests construct it directly).
       // Prisma-backed repositories hit the real Postgres (Supabase).
       provide: CHECKOUT_SERVICE,
-      useFactory: () =>
+      useFactory: (messenger: MessengerService) =>
         new CheckoutService(
           new PrismaStoreRepository(),
           new PrismaCatalogRepository(),
@@ -55,9 +61,17 @@ const CLAIM_SECRET = process.env.CLAIM_SIGNING_SECRET ?? "dev-only-in-memory-sec
           new PrismaOrderRepository(),
           new PrismaOrderSequenceRepository(),
           CLAIM_SECRET,
+          async (order) => {
+            // Post-order Messenger notification (suppressed until a store is connected).
+            await messenger.notifyCustomer({
+              psid: `order_${order.orderNumber}`,
+              text: `Order ${order.orderNumber} received (${order.totalMinor / 100} ${order.currencyCode}).`,
+              storeId: order.storeId,
+            });
+          },
         ),
     },
   ],
-  exports: [CHECKOUT_SERVICE],
+  exports: [CHECKOUT_SERVICE, "MESSENGER_SERVICE"],
 })
 export class AppModule {}
