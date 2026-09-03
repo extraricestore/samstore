@@ -6,6 +6,7 @@ export interface StoreRecord {
   id: string;
   slug: string;
   name: string;
+  description?: string | null;
   currencyCode: string;
   timezone: string;
   status: "ACTIVE" | "SUSPENDED" | "ARCHIVED" | "CLOSED";

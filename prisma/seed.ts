@@ -91,10 +91,10 @@ async function main() {
   }
 
   // Demo guest cart (use this token for manual checkout tests).
-  await prisma.cart.upsert({
-    where: { token: "cart-demo-token" },
-    update: {},
-    create: {
+  // Full reset: delete any previous cart with this token, then create fresh OPEN.
+  await prisma.cart.deleteMany({ where: { token: "cart-demo-token" } });
+  await prisma.cart.create({
+    data: {
       storeId: store.id,
       token: "cart-demo-token",
       status: "OPEN",

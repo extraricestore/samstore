@@ -41,6 +41,7 @@ export class PrismaStoreRepository implements StoreRepository {
       id: s.id,
       slug: s.slug,
       name: s.name,
+      description: s.description,
       currencyCode: s.currencyCode,
       timezone: s.timezone,
       status: s.status,

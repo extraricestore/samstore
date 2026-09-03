@@ -236,9 +236,9 @@ model Cart {
 }
 
 model CartItem {
-  id             String   @id @default(cuid())
-  cartId         String
-  cart           Cart     @relation(fields: [cartId], references: [id])
+  id              String   @id @default(cuid())
+  cartId          String
+  cart            Cart     @relation(fields: [cartId], references: [id], onDelete: Cascade)
   storeId        String
   productId      String
   product        Product  @relation(fields: [productId], references: [id])

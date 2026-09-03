@@ -1,0 +1,48 @@
+:root {
+  --sam-primary: #d94f2b;
+  --sam-primary-dark: #b83c1e;
+}
+
+body {
+  background: #faf7f2;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.navbar.bg-dark {
+  background-color: #2b2118 !important;
+}
+
+.btn-primary {
+  background-color: var(--sam-primary);
+  border-color: var(--sam-primary);
+}
+.btn-primary:hover,
+.btn-primary:focus {
+  background-color: var(--sam-primary-dark);
+  border-color: var(--sam-primary-dark);
+}
+
+.product-card {
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+.product-card:hover {
+  box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.12);
+  transform: translateY(-2px);
+}
+
+.cart-drawer {
+  background: #fff;
+}
+
+.checkout-form {
+  max-width: 480px;
+  margin: 0 auto;
+  background: #fff;
+  border: 1px solid #e9e2d8;
+  border-radius: 0.75rem;
+  padding: 1.5rem;
+}
+
+.badge.text-bg-primary {
+  background-color: var(--sam-primary) !important;
+}

@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { CHECKOUT_SERVICE, CheckoutService } from "./checkout/checkout.service.js";
 import { CheckoutController } from "./checkout/checkout.controller.js";
+import { PublicStoreController } from "./public/public-store.controller.js";
 import {
   PrismaStoreRepository,
   PrismaCatalogRepository,
@@ -12,7 +13,7 @@ import {
 const CLAIM_SECRET = process.env.CLAIM_SIGNING_SECRET ?? "dev-only-in-memory-secret-0123456789";
 
 @Module({
-  controllers: [CheckoutController],
+  controllers: [CheckoutController, PublicStoreController],
   providers: [
     {
       // CheckoutService is framework-free by design (tests construct it directly).
