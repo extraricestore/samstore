@@ -36,9 +36,22 @@ export class AuthService {
     if (existing) return { ok: false, error: { type: "conflict", message: "Email already registered" } };
 
     const passwordHash = await hashPassword(input.password);
-    const user = await this.repo.createUser(email, passwordHash, input.name ?? null, undefined);
+    const user = await this.repo.createUser(
+      email,
+      passwordHash,
+      input.name ?? null,
+      input.storeId ? { storeId: input.storeId, role: input.role ?? "STORE_OWNER" } : undefined,
+    );
 
-    const token = signToken({ sub: user.id, role: input.role ?? "STORE_OWNER", email: user.email }, this.config);
+    const token = signToken(
+      {
+        sub: user.id,
+        role: input.role ?? "STORE_OWNER",
+        email: user.email,
+        storeId: input.storeId ?? undefined,
+      },
+      this.config,
+    );
     return {
       ok: true,
       value: { token, user: { id: user.id, email: user.email, name: user.name } },
