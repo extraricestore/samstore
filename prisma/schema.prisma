@@ -256,9 +256,9 @@ model Cart {
   storeId    String? // null until the first product binds the cart to a store
   store      Store?     @relation(fields: [storeId], references: [id])
   token      String     @unique // high-entropy guest cart token
-  customerId String? // linked customer once accounts exist
+  customerId String?    // linked customer once accounts exist
   status     CartStatus @default(OPEN)
-  expiresAt  DateTime?
+  expiresAt  DateTime?  // soft-expiry: abandoned carts get released
   createdAt  DateTime   @default(now())
   updatedAt  DateTime   @updatedAt
 

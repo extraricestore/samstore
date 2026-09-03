@@ -44,6 +44,7 @@ export interface CartRecord {
   storeId: string;
   token: string;
   status: "OPEN" | "CONVERTED" | "ABANDONED" | "EXPIRED";
+  expiresAt?: Date | null;
   lines: CartLineRecord[];
 }
 

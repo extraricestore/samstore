@@ -399,4 +399,31 @@ export class AdminController {
     const storeId = await this.resolveStoreId(user, headerStoreId);
     return { vouchers: await this.analytics.voucherUsage(storeId), storeId };
   }
+
+  /** GET /admin/maintenance/stats — cart/order counts (real DB numbers). */
+  @Get("maintenance/stats")
+  async maintenanceStats(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
+    const user = req.user;
+    requireAdmin(user);
+    const storeId = await this.resolveStoreId(user, headerStoreId);
+    const [openCarts, expiredCarts, orders] = await Promise.all([
+      prisma.cart.count({ where: { storeId, status: "OPEN" } }),
+      prisma.cart.count({ where: { storeId, status: "OPEN", expiresAt: { lt: new Date() } } }),
+      prisma.order.count({ where: { storeId } }),
+    ]);
+    return { openCarts, expiredCarts, orders, storeId };
+  }
+
+  /** POST /admin/maintenance/sweep-expired-carts — mark expired OPEN carts ABANDONED. */
+  @Post("maintenance/sweep-expired-carts")
+  async sweepExpiredCarts(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
+    const user = req.user;
+    requireAdmin(user);
+    const storeId = await this.resolveStoreId(user, headerStoreId);
+    const result = await prisma.cart.updateMany({
+      where: { storeId, status: "OPEN", expiresAt: { lt: new Date() } },
+      data: { status: "ABANDONED" },
+    });
+    return { marked: result.count, storeId };
+  }
 }

@@ -146,6 +146,7 @@ export class PrismaCartRepository implements CartRepository {
       storeId: c.storeId ?? "",
       token: c.token,
       status: c.status,
+      expiresAt: c.expiresAt,
       lines: c.items.map((i) => ({
         productId: i.productId,
         quantity: i.quantity,
@@ -161,6 +162,7 @@ export class PrismaCartRepository implements CartRepository {
         storeId: cart.storeId || null,
         token: cart.token,
         status: cart.status,
+        expiresAt: cart.expiresAt ?? null,
       },
     });
     return cart;

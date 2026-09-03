@@ -181,3 +181,31 @@ test("addItem to a converted cart is rejected", async () => {
   if (r.ok) return;
   assert.equal(r.error.type, "conflict");
 });
+
+test("expired cart is rejected on get and add", async () => {
+  const { svc, carts } = makeService();
+  const created = await svc.createCart();
+  if (!created.ok) return;
+  await svc.addItem(created.value.token, "prod-1", 1);
+  // expire the cart
+  const cart = (await carts.findByToken(created.value.token))!;
+  await carts.save({ ...cart, expiresAt: new Date(Date.now() - 1000) });
+
+  const get = await svc.getCart(created.value.token);
+  assert.equal(get.ok, false);
+  if (get.ok) return;
+  assert.equal(get.error.type, "conflict");
+
+  const add = await svc.addItem(created.value.token, "prod-2", 1);
+  assert.equal(add.ok, false);
+  if (add.ok) return;
+  assert.equal(add.error.type, "conflict");
+});
+
+test("fresh cart has a future expiry", async () => {
+  const { svc, carts } = makeService();
+  const created = await svc.createCart();
+  if (!created.ok) return;
+  const cart = (await carts.findByToken(created.value.token))!;
+  assert.ok(cart.expiresAt && cart.expiresAt > new Date());
+});

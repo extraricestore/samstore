@@ -21,6 +21,7 @@ export type CartResult<T> = { ok: true; value: T } | { ok: false; error: ApiErro
 export const CART_SERVICE = Symbol("CART_SERVICE");
 
 const CART_TOKEN_BYTES = 24; // 192 bits of entropy
+const CART_TTL_MS = 7 * 86_400_000; // 7 days — abandoned carts are released after this
 
 export function generateCartToken(): string {
   return `cart_${randomBytes(CART_TOKEN_BYTES).toString("base64url")}`;
@@ -60,6 +61,7 @@ export class CartService {
       storeId: "", // bound on first add
       token,
       status: "OPEN",
+      expiresAt: new Date(Date.now() + CART_TTL_MS),
       lines: [],
     };
     await this.carts.create(cart);
@@ -69,6 +71,9 @@ export class CartService {
   async getCart(token: string): Promise<CartResult<CartWithItemsDTO>> {
     const cart = await this.carts.findByToken(token);
     if (!cart) return { ok: false, error: { type: "not_found", message: "Cart not found" } };
+    if (cart.expiresAt && cart.expiresAt < new Date()) {
+      return { ok: false, error: { type: "conflict", message: "This cart has expired — please start a new one" } };
+    }
     const products = await this.loadProducts(cart);
     return { ok: true, value: this.toDTO(cart, products) };
   }
@@ -89,6 +94,9 @@ export class CartService {
     if (!cart) return { ok: false, error: { type: "not_found", message: "Cart not found" } };
     if (cart.status !== "OPEN") {
       return { ok: false, error: { type: "conflict", message: "Cart is no longer open" } };
+    }
+    if (cart.expiresAt && cart.expiresAt < new Date()) {
+      return { ok: false, error: { type: "conflict", message: "This cart has expired — please start a new one" } };
     }
 
     const product = await this.catalog.getProductById(productId);
