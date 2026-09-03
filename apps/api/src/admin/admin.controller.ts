@@ -18,6 +18,7 @@ import { prisma } from "../persistence/prisma-repositories.js";
 import { AUTH_SERVICE, AuthService } from "../auth/auth.service.js";
 import { ProductAdminService } from "./product-admin.service.js";
 import { OrderAdminService } from "./order-admin.service.js";
+import { StoreSettingsService } from "./store-settings.service.js";
 import type { OrderState } from "../domain/order-state.js";
 
 const ADMIN_ROLES = ["STORE_OWNER", "PLATFORM_ADMIN", "MANAGER", "STAFF"];
@@ -61,6 +62,7 @@ function resolveStoreId(user: AuthPrincipal, explicit?: string): string {
 export class AdminController {
   private readonly productsAdmin = new ProductAdminService();
   private readonly ordersAdmin = new OrderAdminService();
+  private readonly settingsAdmin = new StoreSettingsService();
 
   constructor(@Inject(AUTH_SERVICE) private readonly auth: AuthService) {}
 
@@ -179,6 +181,41 @@ export class AdminController {
     requireAdmin(user);
     const storeId = resolveStoreId(user);
     const result = await this.productsAdmin.remove(storeId, id);
+    if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+    return result.value;
+  }
+
+  /** GET /admin/settings — store + settings + public link. */
+  @Get("settings")
+  async getSettings(@Req() req: Request & { user?: AuthPrincipal }) {
+    const user = req.user;
+    requireAdmin(user);
+    const storeId = resolveStoreId(user);
+    const settings = await this.settingsAdmin.get(storeId);
+    if (!settings) throw new HttpException({ type: "not_found", message: "Store not found" }, HttpStatus.NOT_FOUND);
+    return settings;
+  }
+
+  /** PATCH /admin/settings — update store settings. */
+  @Patch("settings")
+  async updateSettings(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Body() body: {
+      allowGuestOrders?: boolean;
+      orderingPaused?: boolean;
+      closedStoreMessage?: string | null;
+      minOrderAmountMinor?: number;
+      deliveryFeeMinor?: number;
+      deliveryEnabled?: boolean;
+      pickupEnabled?: boolean;
+      orderCutoff?: string | null;
+      maxOpenOrdersPerCustomer?: number;
+    },
+  ) {
+    const user = req.user;
+    requireAdmin(user);
+    const storeId = resolveStoreId(user);
+    const result = await this.settingsAdmin.update(storeId, body);
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
     return result.value;
   }

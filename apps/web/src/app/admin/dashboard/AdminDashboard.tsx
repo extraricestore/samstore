@@ -5,8 +5,9 @@ import { useRouter } from "next/navigation";
 import { getAdminToken } from "../../../lib/admin";
 import OrdersPanel from "../../../components/admin/OrdersPanel";
 import ProductsPanel from "../../../components/admin/ProductsPanel";
+import SettingsPanel from "../../../components/admin/SettingsPanel";
 
-type Tab = "orders" | "products";
+type Tab = "orders" | "products" | "settings";
 
 export default function AdminDashboard() {
   const router = useRouter();
@@ -53,6 +54,14 @@ export default function AdminDashboard() {
                   Products
                 </button>
               </li>
+              <li className="nav-item">
+                <button
+                  className={`nav-link ${tab === "settings" ? "active bg-primary" : "text-light"}`}
+                  onClick={() => setTab("settings")}
+                >
+                  Settings
+                </button>
+              </li>
             </ul>
             <button className="btn btn-outline-light btn-sm" onClick={logout}>
               <i className="bi bi-box-arrow-right me-1"></i>Log out
@@ -61,7 +70,9 @@ export default function AdminDashboard() {
         </div>
       </nav>
       <main className="container py-4">
-        {tab === "orders" ? <OrdersPanel /> : <ProductsPanel />}
+        {tab === "orders" && <OrdersPanel />}
+        {tab === "products" && <ProductsPanel />}
+        {tab === "settings" && <SettingsPanel />}
       </main>
     </div>
   );
