@@ -8,6 +8,7 @@ export const ORDER_STATES = [
   "READY",
   "OUT_FOR_DELIVERY",
   "DELIVERED",
+  "COMPLETED",
   "CANCELLED",
   "FAILED_DELIVERY",
 ] as const;
@@ -16,12 +17,13 @@ export type OrderState = (typeof ORDER_STATES)[number];
 
 // Allowed transitions (forward only; no skipping payment/delivery invariants).
 export const ALLOWED_TRANSITIONS: Record<OrderState, OrderState[]> = {
-  RECEIVED: ["CONFIRMED", "CANCELLED"],
+  RECEIVED: ["CONFIRMED", "COMPLETED", "CANCELLED"],
   CONFIRMED: ["PREPARING", "CANCELLED"],
   PREPARING: ["READY", "CANCELLED"],
   READY: ["OUT_FOR_DELIVERY", "CANCELLED"],
   OUT_FOR_DELIVERY: ["DELIVERED", "FAILED_DELIVERY"],
   DELIVERED: [],
+  COMPLETED: [], // terminal POS/counter state
   CANCELLED: [],
   FAILED_DELIVERY: ["OUT_FOR_DELIVERY"], // retry delivery
 };
@@ -59,7 +61,7 @@ export function assertTransition(from: OrderState, to: OrderState, reason?: stri
 
 /** Payment status side-effect for COD: collecting on delivery. */
 export function paymentEffectFor(to: OrderState, currentPayment: string): string {
-  if (to === "DELIVERED") return "COLLECTED";
+  if (to === "DELIVERED" || to === "COMPLETED") return "COLLECTED";
   if (to === "CANCELLED" || to === "FAILED_DELIVERY") return "CANCELLED_REFUND";
   return currentPayment;
 }

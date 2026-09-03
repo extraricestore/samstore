@@ -18,6 +18,8 @@ import { CustomerAuthService, CUSTOMER_AUTH_SERVICE } from "./auth/customer-auth
 import { CustomerAuthController } from "./auth/customer-auth.controller.js";
 import { LoyaltyService, LOYALTY_SERVICE } from "./loyalty/loyalty.service.js";
 import { NotificationsService, NOTIFICATIONS_SERVICE } from "./notifications/notifications.service.js";
+import { PosService, POS_SERVICE } from "./pos/pos.service.js";
+import { PosController } from "./pos/pos.controller.js";
 import { verifyToken } from "./auth/auth.domain.js";
 import {
   PrismaStoreRepository,
@@ -30,8 +32,12 @@ import {
 const CLAIM_SECRET = process.env.CLAIM_SIGNING_SECRET ?? "dev-only-in-memory-secret-0123456789";
 
 @Module({
-  controllers: [CheckoutController, PublicStoreController, CartController, AuthController, AdminController, OrderLookupController, CustomerAuthController],
+  controllers: [CheckoutController, PublicStoreController, CartController, AuthController, AdminController, OrderLookupController, CustomerAuthController, PosController],
   providers: [
+    {
+      provide: POS_SERVICE,
+      useFactory: () => new PosService(),
+    },
     {
       provide: CUSTOMER_AUTH_SERVICE,
       useFactory: () =>

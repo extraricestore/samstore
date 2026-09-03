@@ -77,9 +77,11 @@ export class PrismaCatalogRepository implements CatalogRepository {
     p: Awaited<ReturnType<PrismaClient["product"]["findFirst"]>> & {
       category: { name: string } | null;
       images: { url: string; sortOrder: number }[];
-      stockLevel: { quantityOnHand: number; quantityReserved: number } | null;
+      stockLevels: { quantityOnHand: number; quantityReserved: number }[];
     },
   ): ProductRecord {
+    const onHand = p.stockLevels.reduce((s, l) => s + l.quantityOnHand, 0);
+    const reserved = p.stockLevels.reduce((s, l) => s + l.quantityReserved, 0);
     return {
       id: p.id,
       storeId: p.storeId,
@@ -90,8 +92,8 @@ export class PrismaCatalogRepository implements CatalogRepository {
       isActive: p.isActive,
       categoryName: p.category?.name ?? null,
       images: p.images.map((i) => i.url),
-      quantityOnHand: p.stockLevel?.quantityOnHand ?? 0,
-      quantityReserved: p.stockLevel?.quantityReserved ?? 0,
+      quantityOnHand: onHand,
+      quantityReserved: reserved,
     };
   }
 
@@ -101,7 +103,7 @@ export class PrismaCatalogRepository implements CatalogRepository {
       include: {
         category: { select: { name: true } },
         images: { orderBy: { sortOrder: "asc" }, select: { url: true, sortOrder: true } },
-        stockLevel: { select: { quantityOnHand: true, quantityReserved: true } },
+        stockLevels: { select: { quantityOnHand: true, quantityReserved: true } },
       },
     });
     return rows.map(PrismaCatalogRepository.toRecord);
@@ -113,7 +115,7 @@ export class PrismaCatalogRepository implements CatalogRepository {
       include: {
         category: { select: { name: true } },
         images: { orderBy: { sortOrder: "asc" }, select: { url: true, sortOrder: true } },
-        stockLevel: { select: { quantityOnHand: true, quantityReserved: true } },
+        stockLevels: { select: { quantityOnHand: true, quantityReserved: true } },
       },
     });
     return rows.map(PrismaCatalogRepository.toRecord);
@@ -125,7 +127,7 @@ export class PrismaCatalogRepository implements CatalogRepository {
       include: {
         category: { select: { name: true } },
         images: { orderBy: { sortOrder: "asc" }, select: { url: true, sortOrder: true } },
-        stockLevel: { select: { quantityOnHand: true, quantityReserved: true } },
+        stockLevels: { select: { quantityOnHand: true, quantityReserved: true } },
       },
     });
     return row ? PrismaCatalogRepository.toRecord(row) : null;

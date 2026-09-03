@@ -14,10 +14,13 @@ export class ProductAdminService {
       orderBy: { createdAt: "asc" },
       include: {
         category: { select: { id: true, name: true, slug: true } },
-        stockLevel: { select: { quantityOnHand: true, quantityReserved: true, reorderThreshold: true } },
+        stockLevels: { select: { quantityOnHand: true, quantityReserved: true, reorderThreshold: true } },
       },
     });
-    return products.map((p) => ({
+    return products.map((p) => {
+      const onHand = p.stockLevels.reduce((s, l) => s + l.quantityOnHand, 0);
+      const reserved = p.stockLevels.reduce((s, l) => s + l.quantityReserved, 0);
+      return {
       id: p.id,
       sku: p.sku,
       name: p.name,
@@ -25,11 +28,12 @@ export class ProductAdminService {
       priceMinor: p.priceMinor,
       isActive: p.isActive,
       category: p.category,
-      quantityOnHand: p.stockLevel?.quantityOnHand ?? 0,
-      quantityReserved: p.stockLevel?.quantityReserved ?? 0,
-      availableQuantity: (p.stockLevel?.quantityOnHand ?? 0) - (p.stockLevel?.quantityReserved ?? 0),
-      reorderThreshold: p.stockLevel?.reorderThreshold ?? 0,
-    }));
+      quantityOnHand: onHand,
+      quantityReserved: reserved,
+      availableQuantity: onHand - reserved,
+      reorderThreshold: p.stockLevels[0]?.reorderThreshold ?? 0,
+    };
+    });
   }
 
   /** Create a product (with optional category by slug + initial stock). */

@@ -14,8 +14,9 @@ import AnalyticsPanel from "../../../components/admin/AnalyticsPanel";
 import MaintenancePanel from "../../../components/admin/MaintenancePanel";
 import TeamPanel from "../../../components/admin/TeamPanel";
 import WarehousesPanel from "../../../components/admin/WarehousesPanel";
+import PosPanel from "../../../components/admin/PosPanel";
 
-type Tab = "orders" | "products" | "settings" | "vouchers" | "stores" | "customers" | "analytics" | "maintenance" | "team" | "warehouses";
+type Tab = "pos" | "orders" | "products" | "settings" | "vouchers" | "stores" | "customers" | "analytics" | "maintenance" | "team" | "warehouses";
 
 interface MyStore { id: string; name: string; slug: string; role: string; }
 
@@ -85,7 +86,7 @@ export default function AdminDashboard() {
               </select>
             )}
             <ul className="nav nav-pills">
-              {(["orders", "products", "team", "customers", "analytics", "vouchers", "settings", "warehouses", "stores", "maintenance"] as Tab[]).map((t) => (
+              {(["pos", "orders", "products", "team", "customers", "analytics", "vouchers", "settings", "warehouses", "stores", "maintenance"] as Tab[]).map((t) => (
                 <li className="nav-item" key={t}>
                   <button
                     className={`nav-link text-capitalize ${tab === t ? "active bg-primary" : "text-light"}`}
@@ -109,6 +110,7 @@ export default function AdminDashboard() {
             <a className="small" href="/sam-store" target="_blank" rel="noreferrer">view storefront</a>
           </div>
         )}
+        {tab === "pos" && <PosPanel />}
         {tab === "orders" && <OrdersPanel />}
         {tab === "products" && <ProductsPanel />}
         {tab === "settings" && <SettingsPanel />}

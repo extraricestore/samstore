@@ -41,6 +41,7 @@ enum OrderStatus {
   READY
   OUT_FOR_DELIVERY
   DELIVERED
+  COMPLETED // counter/POS sale — terminal, payment captured at completion
   CANCELLED
   FAILED_DELIVERY
 }
@@ -425,6 +426,7 @@ model Order {
   storeId              String
   store                Store         @relation(fields: [storeId], references: [id])
   status               OrderStatus   @default(RECEIVED)
+  source               String        @default("online") // online | pos
   currencyCode         String
   subtotalMinor        Int
   deliveryFeeMinor     Int           @default(0)

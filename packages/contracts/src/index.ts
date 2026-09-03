@@ -133,6 +133,30 @@ export interface CheckoutResponse {
   claimToken: string;
 }
 
+// ─────────────────────────────── POS (counter sales) ───────────────────────────────
+
+export interface PosSellItem {
+  productId: string;
+  quantity: number;
+}
+
+export interface PosSellRequest {
+  /** optional store customer to link the sale to (must belong to the store) */
+  customerId?: string;
+  customerName?: string;
+  items: PosSellItem[];
+  paymentMethod: "cash" | "credit";
+}
+
+export interface PosSellResponse {
+  orderId: string;
+  orderNumber: string;
+  status: string;
+  totalMinor: number;
+  currencyCode: string;
+  paymentMethod: "cash" | "credit";
+}
+
 export interface OrderViewDTO {
   orderNumber: string;
   status: string;

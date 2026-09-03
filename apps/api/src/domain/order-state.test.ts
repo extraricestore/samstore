@@ -30,6 +30,7 @@ test("backwards transitions are rejected", () => {
 test("terminal states have no transitions", () => {
   assert.equal(isTerminal("DELIVERED"), true);
   assert.equal(isTerminal("CANCELLED"), true);
+  assert.equal(isTerminal("COMPLETED"), true);
   assert.equal(isTerminal("RECEIVED"), false);
 });
 
