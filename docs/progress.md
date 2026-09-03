@@ -7,7 +7,23 @@ Updated: 2026-09-01 (Module 1 loop 1) · Active model: `deepseek/deepseek-v4-fla
 | # | Module | Status | Model used | Fallback fired? | Tests | Known defects | Next task |
 |---|--------|--------|-----------|-----------------|-------|---------------|-----------|
 | 0 | Setup: analysis, v2 prompt, AGENTS.md, progress.md | ✅ Done | deepseek-v4-flash-0731 | No | n/a | — | — |
-| 1 | Thin slice foundations | 🚧 In progress | deepseek-v4-flash-0731 | No | **59/59 + live HTTP smoke** | see below | Prisma-backed repos + migrations (blocked on DATABASE_URL) |
+| 1 | Thin slice | ✅ **DONE (gate passed live)** | deepseek-v4-flash-0731 | No | **59/59 + E2E** | none known | Next: Module 2 (auth/tenancy hardening) |
+
+## Module 1 — thin slice COMPLETE ✅
+
+**Full gate verified live 2026-09-01:** guest opens `localhost:3000/sam-store` → browses 3 seeded products (Kape Barako, Turon, Bibingka) → adds to cart (drawer, qty +/-, localStorage) → COD checkout via Next proxy → NestJS → Prisma → Supabase Postgres → **order `SAMSTO-000002`, ₱370.00, claim token returned**. HTTP 201. Retry-safe.
+
+**Shipped this loop:**
+- `apps/web` — Next.js 15 App Router + React 19 + **Bootstrap 5.3** (no Tailwind): `[slug]/page.tsx` (server), `Storefront`, `ProductCard`, `CartDrawer` (offcanvas), `CheckoutForm`; `/api/checkout` server-side proxy
+- `apps/api` — `PublicStoreController` (`GET /public/stores/:slug` → store + active products w/ available qty)
+- Migration `20260903005827_cart_item_cascade` (CartItem cascade delete)
+- Seed resets demo cart (delete + recreate OPEN); `.gitignore` += `*.tsbuildinfo`
+
+**Connections:** Supabase project `yeklfbggabxydnzfyorb` (region **ap-southeast-2**, session pooler :5432, IPv4 pinned via `hostaddr` — IPv6-only direct host was unreachable; transaction pooler :6543 can't run Prisma prepared statements).
+
+**Pushed to GitHub:** `extraricestore/samstore` @ `823d641` (main tracks origin/main).
+
+## Module status
 
 ## Module 1 — loop 2 completed (all verified, real output)
 
