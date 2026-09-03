@@ -22,6 +22,7 @@ import { OrderAdminService } from "./order-admin.service.js";
 import { StoreSettingsService } from "./store-settings.service.js";
 import { VoucherAdminService } from "./voucher-admin.service.js";
 import { StoreAdminService } from "./store-admin.service.js";
+import { AnalyticsService } from "./analytics.service.js";
 import { LoyaltyService } from "../loyalty/loyalty.service.js";
 import type { OrderState } from "../domain/order-state.js";
 
@@ -54,6 +55,7 @@ export class AdminController {
   private readonly settingsAdmin = new StoreSettingsService();
   private readonly vouchersAdmin = new VoucherAdminService();
   private readonly storesAdmin = new StoreAdminService();
+  private readonly analytics = new AnalyticsService();
   private readonly loyalty = new LoyaltyService();
 
   constructor(@Inject(AUTH_SERVICE) private readonly auth: AuthService) {}
@@ -350,5 +352,51 @@ export class AdminController {
     if (!sc) throw new HttpException({ type: "not_found", message: "Customer not found" }, HttpStatus.NOT_FOUND);
     const ledger = await this.loyalty.customerLedger(storeId, sc.customerId);
     return ledger;
+  }
+
+  /** GET /admin/analytics/summary — dashboard KPIs. */
+  @Get("analytics/summary")
+  async analyticsSummary(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
+    const user = req.user;
+    requireAdmin(user);
+    const storeId = await this.resolveStoreId(user, headerStoreId);
+    return { ...(await this.analytics.summary(storeId)), storeId };
+  }
+
+  /** GET /admin/analytics/status — order status funnel. */
+  @Get("analytics/status")
+  async analyticsStatus(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
+    const user = req.user;
+    requireAdmin(user);
+    const storeId = await this.resolveStoreId(user, headerStoreId);
+    return { rows: await this.analytics.statusBreakdown(storeId), storeId };
+  }
+
+  /** GET /admin/analytics/daily?days=14 — revenue + orders per day. */
+  @Get("analytics/daily")
+  async analyticsDaily(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string, @Headers("days") days?: string) {
+    const user = req.user;
+    requireAdmin(user);
+    const storeId = await this.resolveStoreId(user, headerStoreId);
+    const n = Math.min(Math.max(parseInt(days ?? "14", 10) || 14, 3), 90);
+    return { ...(await this.analytics.dailyRevenue(storeId, n)), storeId };
+  }
+
+  /** GET /admin/analytics/products — top products. */
+  @Get("analytics/products")
+  async analyticsProducts(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
+    const user = req.user;
+    requireAdmin(user);
+    const storeId = await this.resolveStoreId(user, headerStoreId);
+    return { products: await this.analytics.topProducts(storeId), storeId };
+  }
+
+  /** GET /admin/analytics/vouchers — voucher usage. */
+  @Get("analytics/vouchers")
+  async analyticsVouchers(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
+    const user = req.user;
+    requireAdmin(user);
+    const storeId = await this.resolveStoreId(user, headerStoreId);
+    return { vouchers: await this.analytics.voucherUsage(storeId), storeId };
   }
 }
