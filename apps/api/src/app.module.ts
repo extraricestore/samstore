@@ -13,6 +13,7 @@ import type { AuthConfig } from "./auth/auth.domain.js";
 import { MessengerService, SuppressedMessengerProvider } from "./messenger/messenger.adapter.js";
 import { OrderLookupService, ORDER_LOOKUP_SERVICE } from "./orders/order-lookup.service.js";
 import { OrderLookupController } from "./orders/order-lookup.controller.js";
+import { VoucherPublicService } from "./voucher/voucher-public.service.js";
 import {
   PrismaStoreRepository,
   PrismaCatalogRepository,
@@ -56,11 +57,15 @@ const CLAIM_SECRET = process.env.CLAIM_SIGNING_SECRET ?? "dev-only-in-memory-sec
       useFactory: () => new MessengerService(new SuppressedMessengerProvider(), () => false),
     },
     {
+      provide: "VOUCHER_PUBLIC_SERVICE",
+      useFactory: () => new VoucherPublicService(),
+    },
+    {
       // CheckoutService is framework-free by design (tests construct it directly).
       // Prisma-backed repositories hit the real Postgres (Supabase).
       provide: CHECKOUT_SERVICE,
-      inject: ["MESSENGER_SERVICE"],
-      useFactory: (messenger: MessengerService) =>
+      inject: ["MESSENGER_SERVICE", "VOUCHER_PUBLIC_SERVICE"],
+      useFactory: (messenger: MessengerService, voucher: VoucherPublicService) =>
         new CheckoutService(
           new PrismaStoreRepository(),
           new PrismaCatalogRepository(),
@@ -76,6 +81,7 @@ const CLAIM_SECRET = process.env.CLAIM_SIGNING_SECRET ?? "dev-only-in-memory-sec
               storeId: order.storeId,
             });
           },
+          voucher, // VoucherGateway — validate + redeem at checkout
         ),
     },
   ],

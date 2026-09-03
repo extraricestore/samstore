@@ -115,6 +115,8 @@ export interface CheckoutRequest {
   paymentMethod: "cod";
   /** client-generated; same value on retry → same order, no duplicates */
   idempotencyKey: string;
+  /** optional voucher code to apply at checkout */
+  voucherCode?: string;
 }
 
 export interface CheckoutResponse {

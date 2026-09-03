@@ -22,6 +22,7 @@ export default function CheckoutForm({ cartToken, deliveryFeeMinor, totalMinor, 
     landmark: "",
     deliverySchedule: "",
     notes: "",
+    voucherCode: "",
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,7 +42,7 @@ export default function CheckoutForm({ cartToken, deliveryFeeMinor, totalMinor, 
       const res = await fetch("/api/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...form, cartToken, paymentMethod: "cod", idempotencyKey }),
+        body: JSON.stringify({ ...form, cartToken, paymentMethod: "cod", idempotencyKey, voucherCode: form.voucherCode.trim() || undefined }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -86,9 +87,13 @@ export default function CheckoutForm({ cartToken, deliveryFeeMinor, totalMinor, 
           <label className="form-label small">Delivery schedule</label>
           <input className="form-control" value={form.deliverySchedule} onChange={set("deliverySchedule")} placeholder="e.g. Today 5-8pm" />
         </div>
-        <div className="mb-3">
+        <div className="mb-2">
           <label className="form-label small">Notes</label>
           <input className="form-control" value={form.notes} onChange={set("notes")} />
+        </div>
+        <div className="mb-3">
+          <label className="form-label small">Voucher code</label>
+          <input className="form-control" value={form.voucherCode} onChange={set("voucherCode")} placeholder="e.g. SAM10 (optional)" />
         </div>
 
         <div className="d-flex justify-content-between align-items-center mb-3">

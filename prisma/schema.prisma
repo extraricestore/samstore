@@ -86,7 +86,7 @@ model PlatformUser {
   mfaEnabled   Boolean      @default(false)
   isActive     Boolean      @default(true)
   createdAt    DateTime     @default(now())
-  updatedAt    DateTime    @updatedAt
+  updatedAt    DateTime     @updatedAt
 }
 
 // ─────────────────────────────── Users / auth ───────────────────────────────
@@ -121,8 +121,8 @@ model Store {
   name         String
   description  String?
   logoUrl      String?
-  currencyCode  String      @default("PHP") // operator decision 2026-09-01: Philippines → PHP
-  timezone      String      @default("Asia/Manila") // operator decision 2026-09-01
+  currencyCode String      @default("PHP") // operator decision 2026-09-01: Philippines → PHP
+  timezone     String      @default("Asia/Manila") // operator decision 2026-09-01
   status       StoreStatus @default(ACTIVE)
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
@@ -140,6 +140,7 @@ model Store {
   userStores     UserStore[]
   counters       StoreCounter[]
   auditLogs      AuditLog[]
+  vouchers       Voucher[]
 }
 
 model StoreSettings {
@@ -253,7 +254,7 @@ model Cart {
   storeId    String? // null until the first product binds the cart to a store
   store      Store?     @relation(fields: [storeId], references: [id])
   token      String     @unique // high-entropy guest cart token
-  customerId String?    // linked customer once accounts exist
+  customerId String? // linked customer once accounts exist
   status     CartStatus @default(OPEN)
   expiresAt  DateTime?
   createdAt  DateTime   @default(now())
@@ -263,9 +264,9 @@ model Cart {
 }
 
 model CartItem {
-  id              String   @id @default(cuid())
-  cartId          String
-  cart            Cart     @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  id             String   @id @default(cuid())
+  cartId         String
+  cart           Cart     @relation(fields: [cartId], references: [id], onDelete: Cascade)
   storeId        String
   productId      String
   product        Product  @relation(fields: [productId], references: [id])
@@ -278,6 +279,41 @@ model CartItem {
 }
 
 // ─────────────────────────────── Orders ───────────────────────────────
+
+// ─────────────────────────────── Vouchers / promotions ───────────────────────────────
+
+model Voucher {
+  id             String    @id @default(cuid())
+  storeId        String
+  store          Store     @relation(fields: [storeId], references: [id])
+  code           String // customer-facing, e.g. SAM10
+  description    String?
+  discountMinor  Int // flat discount in minor units (reserved for % variant later)
+  minOrderMinor  Int       @default(0)
+  maxRedemptions Int? // null = unlimited
+  startsAt       DateTime?
+  expiresAt      DateTime?
+  isActive       Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+
+  redemptions VoucherRedemption[]
+
+  @@unique([storeId, code])
+  @@index([storeId, isActive])
+}
+
+model VoucherRedemption {
+  id        String   @id @default(cuid())
+  voucherId String
+  voucher   Voucher  @relation(fields: [voucherId], references: [id])
+  storeId   String
+  orderId   String? // null until redeemed at checkout
+  order     Order?   @relation(fields: [orderId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@unique([voucherId, orderId])
+  @@index([storeId, createdAt])
+}
 
 model Order {
   id                   String        @id @default(cuid())
@@ -293,8 +329,8 @@ model Order {
   snapshot             Json // immutable product names/SKUs/prices at purchase; catalog edits never change history
   paymentMethod        String        @default("cod")
   paymentStatus        PaymentStatus @default(PENDING)
-  idempotencyKey      String?       @unique // sha256 per apps/api/src/domain/idempotency.ts
-  cartToken           String // bound for idempotent retries; mismatch on retry is rejected
+  idempotencyKey       String?       @unique // sha256 per apps/api/src/domain/idempotency.ts
+  cartToken            String // bound for idempotent retries; mismatch on retry is rejected
   customerName         String
   customerPhone        String
   deliveryAddressLine1 String
@@ -308,6 +344,7 @@ model Order {
 
   items         OrderItem[]
   statusHistory OrderStatusHistory[]
+  redemptions   VoucherRedemption[]
   claimTokens   OrderClaimToken[]
 
   @@index([storeId, status, createdAt])

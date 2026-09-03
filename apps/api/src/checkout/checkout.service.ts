@@ -24,6 +24,14 @@ import { randomId } from "../persistence/repositories.js";
 
 export type CheckoutResult = { ok: true; value: CheckoutResponse } | { ok: false; error: ApiError };
 
+/** Optional voucher integration (injected; null in tests that don't need it). */
+export interface VoucherGateway {
+  validate(storeId: string, code: string, orderTotalMinor: number): Promise<
+    { ok: true; discountMinor: number; voucherId: string } | { ok: false; message: string }
+  >;
+  redeem(orderId: string, storeId: string, voucherId: string): Promise<void>;
+}
+
 /** DI token — explicit, so dependency resolution doesn't rely on emitDecoratorMetadata. */
 export const CHECKOUT_SERVICE = Symbol("CHECKOUT_SERVICE");
 
@@ -36,6 +44,7 @@ export class CheckoutService {
     private readonly sequences: OrderSequenceRepository,
     private readonly claimSecret: string,
     private readonly onOrderPlaced?: (order: OrderRecord) => Promise<void>,
+    private readonly voucher?: VoucherGateway,
   ) {}
 
   async checkout(request: CheckoutRequest): Promise<CheckoutResult> {
@@ -145,6 +154,19 @@ export class CheckoutService {
       };
     }
 
+    // 6b. Voucher (optional): validate against the pre-discount total, then apply.
+    let discountMinor = 0;
+    let voucherId: string | null = null;
+    if (request.voucherCode && this.voucher) {
+      const voucherResult = await this.voucher.validate(store.id, request.voucherCode, totals.totalMinor);
+      if (!voucherResult.ok) {
+        return { ok: false, error: { type: "conflict", message: voucherResult.message } };
+      }
+      discountMinor = Math.min(voucherResult.discountMinor, totals.totalMinor);
+      voucherId = voucherResult.voucherId;
+    }
+    const finalTotal = totals.totalMinor - discountMinor;
+
     // 7. Order number from store-scoped sequence
     const seq = await this.sequences.nextOrderSequence(store.id);
     const orderNumber = formatOrderNumber(store.slug, seq);
@@ -174,14 +196,15 @@ export class CheckoutService {
       currencyCode: store.currencyCode,
       subtotalMinor: totals.subtotalMinor,
       deliveryFeeMinor: totals.deliveryFeeMinor,
-      discountMinor: totals.discountMinor,
-      totalMinor: totals.totalMinor,
+      discountMinor: discountMinor, // voucher discount (0 when none)
+      totalMinor: finalTotal,
       snapshot: {
         lines: revalidated.lines,
         items,
         priceChanges: revalidated.priceChanges,
         store: { slug: store.slug, name: store.name },
         paymentMethod: "cod",
+        ...(request.voucherCode ? { voucherCode: request.voucherCode.toUpperCase(), discountMinor } : {}),
       },
       paymentMethod: "cod",
       paymentStatus: "PENDING",
@@ -202,6 +225,11 @@ export class CheckoutService {
 
     // 9. Cart is spent
     await this.carts.save({ ...cart, status: "CONVERTED" });
+
+    // 9b. Record voucher redemption (after the order exists — a failed checkout never consumes it).
+    if (voucherId) {
+      await this.voucher!.redeem(created.id, store.id, voucherId);
+    }
 
     // 10. Post-order notification hook (Messenger bridge — suppressed until a store is connected)
     if (this.onOrderPlaced) {

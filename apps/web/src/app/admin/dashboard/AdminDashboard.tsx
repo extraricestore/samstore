@@ -6,8 +6,9 @@ import { getAdminToken } from "../../../lib/admin";
 import OrdersPanel from "../../../components/admin/OrdersPanel";
 import ProductsPanel from "../../../components/admin/ProductsPanel";
 import SettingsPanel from "../../../components/admin/SettingsPanel";
+import VouchersPanel from "../../../components/admin/VouchersPanel";
 
-type Tab = "orders" | "products" | "settings";
+type Tab = "orders" | "products" | "settings" | "vouchers";
 
 export default function AdminDashboard() {
   const router = useRouter();
@@ -62,6 +63,14 @@ export default function AdminDashboard() {
                   Settings
                 </button>
               </li>
+              <li className="nav-item">
+                <button
+                  className={`nav-link ${tab === "vouchers" ? "active bg-primary" : "text-light"}`}
+                  onClick={() => setTab("vouchers")}
+                >
+                  Vouchers
+                </button>
+              </li>
             </ul>
             <button className="btn btn-outline-light btn-sm" onClick={logout}>
               <i className="bi bi-box-arrow-right me-1"></i>Log out
@@ -73,6 +82,7 @@ export default function AdminDashboard() {
         {tab === "orders" && <OrdersPanel />}
         {tab === "products" && <ProductsPanel />}
         {tab === "settings" && <SettingsPanel />}
+        {tab === "vouchers" && <VouchersPanel />}
       </main>
     </div>
   );

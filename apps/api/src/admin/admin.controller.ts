@@ -19,6 +19,7 @@ import { AUTH_SERVICE, AuthService } from "../auth/auth.service.js";
 import { ProductAdminService } from "./product-admin.service.js";
 import { OrderAdminService } from "./order-admin.service.js";
 import { StoreSettingsService } from "./store-settings.service.js";
+import { VoucherAdminService } from "./voucher-admin.service.js";
 import type { OrderState } from "../domain/order-state.js";
 
 const ADMIN_ROLES = ["STORE_OWNER", "PLATFORM_ADMIN", "MANAGER", "STAFF"];
@@ -63,6 +64,7 @@ export class AdminController {
   private readonly productsAdmin = new ProductAdminService();
   private readonly ordersAdmin = new OrderAdminService();
   private readonly settingsAdmin = new StoreSettingsService();
+  private readonly vouchersAdmin = new VoucherAdminService();
 
   constructor(@Inject(AUTH_SERVICE) private readonly auth: AuthService) {}
 
@@ -216,6 +218,52 @@ export class AdminController {
     requireAdmin(user);
     const storeId = resolveStoreId(user);
     const result = await this.settingsAdmin.update(storeId, body);
+    if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+    return result.value;
+  }
+
+  /** GET /admin/vouchers — list store vouchers with redemption counts. */
+  @Get("vouchers")
+  async listVouchers(@Req() req: Request & { user?: AuthPrincipal }) {
+    const user = req.user;
+    requireAdmin(user);
+    const storeId = resolveStoreId(user);
+    return { vouchers: await this.vouchersAdmin.list(storeId) };
+  }
+
+  /** POST /admin/vouchers — create a voucher. */
+  @Post("vouchers")
+  async createVoucher(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Body() body: { code: string; discountMinor: number; minOrderMinor?: number; maxRedemptions?: number | null; startsAt?: string | null; expiresAt?: string | null; description?: string | null },
+  ) {
+    const user = req.user;
+    requireAdmin(user);
+    const storeId = resolveStoreId(user);
+    const result = await this.vouchersAdmin.create(storeId, {
+      code: body.code,
+      discountMinor: body.discountMinor,
+      minOrderMinor: body.minOrderMinor,
+      maxRedemptions: body.maxRedemptions,
+      startsAt: body.startsAt ? new Date(body.startsAt) : null,
+      expiresAt: body.expiresAt ? new Date(body.expiresAt) : null,
+      description: body.description,
+    });
+    if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+    return result.value;
+  }
+
+  /** PATCH /admin/vouchers/:id — toggle active or edit discount. */
+  @Patch("vouchers/:id")
+  async updateVoucher(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Param("id") id: string,
+    @Body() body: { isActive?: boolean; discountMinor?: number; maxRedemptions?: number | null },
+  ) {
+    const user = req.user;
+    requireAdmin(user);
+    const storeId = resolveStoreId(user);
+    const result = await this.vouchersAdmin.update(storeId, id, body);
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
     return result.value;
   }
