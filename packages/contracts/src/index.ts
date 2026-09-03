@@ -75,6 +75,31 @@ export interface AddToCartRequest {
   quantity: number;
 }
 
+export interface UpdateCartItemRequest {
+  quantity: number;
+}
+
+export interface CreateCartResponse {
+  token: string;
+}
+
+export interface CartItemDTO {
+  productId: string;
+  sku: string;
+  name: string;
+  unitPriceMinor: number;
+  quantity: number;
+  lineTotalMinor: number;
+}
+
+export interface CartWithItemsDTO {
+  token: string;
+  storeId: string;
+  status: "OPEN" | "CONVERTED" | "ABANDONED" | "EXPIRED";
+  items: CartItemDTO[];
+  subtotalMinor: number;
+}
+
 // ─────────────────────────────── Checkout (COD, slice scope) ───────────────────────────────
 
 export interface CheckoutRequest {

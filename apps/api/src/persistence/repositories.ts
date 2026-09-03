@@ -89,10 +89,18 @@ export interface StoreRepository {
 export interface CatalogRepository {
   listActiveProducts(storeId: string): Promise<ProductRecord[]>;
   getProductsByIds(storeId: string, ids: string[]): Promise<ProductRecord[]>;
+  /** Cross-store lookup — used only to bind a fresh cart to the product's store on first add. */
+  getProductById(id: string): Promise<ProductRecord | null>;
 }
 
 export interface CartRepository {
   findByToken(token: string): Promise<CartRecord | null>;
+  /** Create a cart (must be unique token); storeId bound on first add. */
+  create(cart: CartRecord): Promise<CartRecord>;
+  /** Add a line; upserts quantity when the product is already in the cart. */
+  addItem(cartId: string, storeId: string, productId: string, quantity: number, unitPriceMinor: number): Promise<void>;
+  updateItemQuantity(cartId: string, productId: string, quantity: number): Promise<void>;
+  removeItem(cartId: string, productId: string): Promise<void>;
   save(cart: CartRecord): Promise<void>;
 }
 
@@ -145,6 +153,9 @@ export class InMemoryCatalogRepository implements CatalogRepository {
       .map((id) => this.byId.get(id))
       .filter((p): p is ProductRecord => !!p && p.storeId === storeId);
   }
+  async getProductById(id: string): Promise<ProductRecord | null> {
+    return this.byId.get(id) ?? null;
+  }
 }
 
 export class InMemoryCartRepository implements CartRepository {
@@ -156,6 +167,29 @@ export class InMemoryCartRepository implements CartRepository {
 
   async findByToken(token: string): Promise<CartRecord | null> {
     return this.byToken.get(token) ?? null;
+  }
+  async create(cart: CartRecord): Promise<CartRecord> {
+    this.byToken.set(cart.token, cart);
+    return cart;
+  }
+  async addItem(cartId: string, storeId: string, productId: string, quantity: number, unitPriceMinor: number): Promise<void> {
+    const cart = [...this.byToken.values()].find((c) => c.id === cartId);
+    if (!cart) return;
+    const existing = cart.lines.find((l) => l.productId === productId);
+    if (existing) {
+      existing.quantity += quantity;
+    } else {
+      cart.lines.push({ productId, quantity, unitPriceMinor });
+    }
+  }
+  async updateItemQuantity(cartId: string, productId: string, quantity: number): Promise<void> {
+    const cart = [...this.byToken.values()].find((c) => c.id === cartId);
+    const line = cart?.lines.find((l) => l.productId === productId);
+    if (line) line.quantity = quantity;
+  }
+  async removeItem(cartId: string, productId: string): Promise<void> {
+    const cart = [...this.byToken.values()].find((c) => c.id === cartId);
+    if (cart) cart.lines = cart.lines.filter((l) => l.productId !== productId);
   }
   async save(cart: CartRecord): Promise<void> {
     this.byToken.set(cart.token, cart);

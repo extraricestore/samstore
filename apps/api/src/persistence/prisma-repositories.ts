@@ -118,6 +118,18 @@ export class PrismaCatalogRepository implements CatalogRepository {
     });
     return rows.map(PrismaCatalogRepository.toRecord);
   }
+
+  async getProductById(id: string): Promise<ProductRecord | null> {
+    const row = await prisma.product.findUnique({
+      where: { id },
+      include: {
+        category: { select: { name: true } },
+        images: { orderBy: { sortOrder: "asc" }, select: { url: true, sortOrder: true } },
+        stockLevel: { select: { quantityOnHand: true, quantityReserved: true } },
+      },
+    });
+    return row ? PrismaCatalogRepository.toRecord(row) : null;
+  }
 }
 
 export class PrismaCartRepository implements CartRepository {
@@ -131,7 +143,7 @@ export class PrismaCartRepository implements CartRepository {
     if (!c) return null;
     return {
       id: c.id,
-      storeId: c.storeId,
+      storeId: c.storeId ?? "",
       token: c.token,
       status: c.status,
       lines: c.items.map((i) => ({
@@ -142,12 +154,55 @@ export class PrismaCartRepository implements CartRepository {
     };
   }
 
+  async create(cart: CartRecord): Promise<CartRecord> {
+    await prisma.cart.create({
+      data: {
+        id: cart.id,
+        storeId: cart.storeId || null,
+        token: cart.token,
+        status: cart.status,
+      },
+    });
+    return cart;
+  }
+
+  async addItem(cartId: string, storeId: string, productId: string, quantity: number, unitPriceMinor: number): Promise<void> {
+    await prisma.$transaction(async (tx) => {
+      const existing = await tx.cartItem.findUnique({
+        where: { cartId_productId: { cartId, productId } },
+      });
+      if (existing) {
+        await tx.cartItem.update({
+          where: { id: existing.id },
+          data: { quantity: existing.quantity + quantity },
+        });
+      } else {
+        await tx.cartItem.create({
+          data: { cartId, storeId, productId, quantity, unitPriceMinor },
+        });
+      }
+    });
+  }
+
+  async updateItemQuantity(cartId: string, productId: string, quantity: number): Promise<void> {
+    await prisma.cartItem.update({
+      where: { cartId_productId: { cartId, productId } },
+      data: { quantity },
+    });
+  }
+
+  async removeItem(cartId: string, productId: string): Promise<void> {
+    await prisma.cartItem.deleteMany({
+      where: { cartId, productId },
+    });
+  }
+
   async save(cart: CartRecord): Promise<void> {
     // Replace line items + status atomically (status transition e.g. OPEN → CONVERTED).
     await prisma.$transaction(async (tx) => {
       await tx.cart.update({
         where: { id: cart.id },
-        data: { status: cart.status },
+        data: { status: cart.status, ...(cart.storeId ? { storeId: cart.storeId } : {}) },
       });
       await tx.cartItem.deleteMany({ where: { cartId: cart.id } });
       if (cart.lines.length > 0) {

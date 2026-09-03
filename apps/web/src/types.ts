@@ -50,6 +50,23 @@ export interface CartDTO {
   subtotalMinor: number;
 }
 
+export interface CartItemDTO {
+  productId: string;
+  sku: string;
+  name: string;
+  unitPriceMinor: number;
+  quantity: number;
+  lineTotalMinor: number;
+}
+
+export interface CartWithItemsDTO {
+  token: string;
+  storeId: string;
+  status: "OPEN" | "CONVERTED" | "ABANDONED" | "EXPIRED";
+  items: CartItemDTO[];
+  subtotalMinor: number;
+}
+
 export interface CheckoutRequest {
   cartToken: string;
   customerName: string;

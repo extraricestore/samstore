@@ -1,13 +1,21 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import type { ProductDTO, PublicStoreDTO, CheckoutResponse } from "../types";
+import { useCallback, useEffect, useState } from "react";
+import type { ProductDTO, PublicStoreDTO, CheckoutResponse, CartWithItemsDTO } from "../types";
 import ProductCard from "../components/ProductCard";
 import CartDrawer, { type CartLineUI } from "../components/CartDrawer";
 import CheckoutForm from "../components/CheckoutForm";
+import {
+  ensureCartToken,
+  getStoredCartToken,
+  getCart,
+  addItem,
+  updateItemQuantity,
+  removeItem,
+  clearStoredCartToken,
+} from "../lib/cart-client";
 
 const toPesos = (minor: number) => `₱${(minor / 100).toFixed(2)}`;
-const STORAGE_KEY = "samstore.cart.v1";
 
 interface StorefrontProps {
   store: PublicStoreDTO;
@@ -17,48 +25,79 @@ interface StorefrontProps {
 export default function Storefront({ store, products }: StorefrontProps) {
   const [cartOpen, setCartOpen] = useState(false);
   const [view, setView] = useState<"menu" | "checkout" | "done">("menu");
-  const [lastOrder, setLastOrder] = useState<CheckoutResponse | null>(null);
-  const [orderInfo, setOrderInfo] = useState<{ name: string; phone: string; address: string } | null>(null);
-
-  // cart state persisted to localStorage (guest cart token approach replaced later)
+  const [cartToken, setCartToken] = useState<string | null>(null);
   const [lines, setLines] = useState<CartLineUI[]>([]);
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) setLines(JSON.parse(saved));
-    } catch {}
-  }, []);
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(lines));
-    } catch {}
-  }, [lines]);
+  const [cartError, setCartError] = useState<string | null>(null);
+  const [lastOrder, setLastOrder] = useState<CheckoutResponse | null>(null);
 
-  const addProduct = (p: ProductDTO) => {
-    setLines((ls) => {
-      const found = ls.find((l) => l.product.id === p.id);
-      if (found) return ls.map((l) => (l.product.id === p.id ? { ...l, quantity: l.quantity + 1 } : l));
-      return [...ls, { product: p, quantity: 1 }];
-    });
+  const productById = useCallback(
+    () => new Map(products.map((p) => [p.id, p])),
+    [products],
+  );
+
+  const toLines = useCallback(
+    (cart: CartWithItemsDTO): CartLineUI[] =>
+      cart.items
+        .map((i) => {
+          const product = productById().get(i.productId);
+          if (!product) return null;
+          return { product: { ...product, priceMinor: i.unitPriceMinor }, quantity: i.quantity };
+        })
+        .filter((l): l is CartLineUI => l !== null),
+    [productById],
+  );
+
+  // Hydrate an existing cart (token in localStorage) on mount.
+  useEffect(() => {
+    const token = getStoredCartToken();
+    if (!token) return;
+    setCartToken(token);
+    getCart(token)
+      .then((cart) => setLines(toLines(cart)))
+      .catch(() => {
+        // stale token → start fresh
+        clearStoredCartToken();
+        setCartToken(null);
+      });
+  }, [toLines]);
+
+  const addProduct = async (p: ProductDTO) => {
+    setCartError(null);
+    try {
+      const token = cartToken ?? (await ensureCartToken());
+      setCartToken(token);
+      const cart = await addItem(token, p.id, 1);
+      setLines(toLines(cart));
+    } catch (e) {
+      setCartError(e instanceof Error ? e.message : "Could not add item");
+    }
   };
 
-  const updateQty = (productId: string, qty: number) => {
-    if (qty <= 0) {
-      setLines((ls) => ls.filter((l) => l.product.id !== productId));
-      return;
+  const updateQty = async (productId: string, qty: number) => {
+    if (!cartToken) return;
+    setCartError(null);
+    try {
+      const cart =
+        qty <= 0
+          ? await removeItem(cartToken, productId)
+          : await updateItemQuantity(cartToken, productId, qty);
+      setLines(toLines(cart));
+    } catch (e) {
+      setCartError(e instanceof Error ? e.message : "Could not update item");
     }
-    setLines((ls) => ls.map((l) => (l.product.id === productId ? { ...l, quantity: qty } : l)));
+  };
+
+  const handleCheckoutSuccess = (r: CheckoutResponse) => {
+    setLastOrder(r);
+    setLines([]);
+    clearStoredCartToken();
+    setCartToken(null);
+    setView("done");
   };
 
   const cartCount = lines.reduce((s, l) => s + l.quantity, 0);
   const subtotal = lines.reduce((s, l) => s + l.product.priceMinor * l.quantity, 0);
   const total = subtotal + (subtotal > 0 ? store.deliveryFeeMinor : 0);
-
-  const handleCheckoutSuccess = (r: CheckoutResponse) => {
-    setLastOrder(r);
-    setLines([]);
-    setView("done");
-  };
 
   if (store.orderingPaused || !store.guestOrderingEnabled) {
     return (
@@ -104,6 +143,9 @@ export default function Storefront({ store, products }: StorefrontProps) {
 
       {/* Body */}
       <main className="container py-4">
+        {cartError && (
+          <div className="alert alert-danger py-2 small">{cartError}</div>
+        )}
         {view === "done" && lastOrder ? (
           <div className="text-center py-5">
             <i className="bi bi-check-circle-fill text-success fs-1 d-block mb-3"></i>
@@ -115,7 +157,7 @@ export default function Storefront({ store, products }: StorefrontProps) {
           </div>
         ) : view === "checkout" ? (
           <CheckoutForm
-            cartToken="cart-demo-token"
+            cartToken={cartToken ?? ""}
             deliveryFeeMinor={store.deliveryFeeMinor}
             totalMinor={total}
             onSuccess={handleCheckoutSuccess}
