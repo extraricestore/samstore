@@ -100,7 +100,9 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  memberships UserStore[]
+  memberships        UserStore[]
+  transfersRequested StockTransfer[] @relation("TransferRequestedBy")
+  transfersApproved  StockTransfer[] @relation("TransferApprovedBy")
 }
 
 model UserStore {
@@ -144,6 +146,8 @@ model Store {
   vouchers       Voucher[]
   loyaltyEntries LoyaltyEntry[]
   notifications  NotificationLog[]
+  warehouses     Warehouse[]
+  stockTransfers StockTransfer[]
 }
 
 model StoreSettings {
@@ -218,10 +222,13 @@ model Product {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  images     ProductImage[]
-  stockLevel StockLevel?
-  cartItems  CartItem[]
-  orderItems OrderItem[]
+  images        ProductImage[]
+  stockLevel    StockLevel?     @relation(fields: [stockLevelId], references: [id]) // legacy single-level (no warehouse); kept for backward compat
+  stockLevels   StockLevel[]    @relation("ProductStockLevels")
+  cartItems     CartItem[]
+  orderItems    OrderItem[]
+  transfersFrom StockTransfer[]
+  stockLevelId  String?
 
   @@unique([storeId, sku])
 }
@@ -236,16 +243,68 @@ model ProductImage {
   sortOrder Int     @default(0)
 }
 
+// ─────────────────────────────── Warehouses / inventory ───────────────────────────────
+
+model Warehouse {
+  id        String   @id @default(cuid())
+  storeId   String
+  store     Store    @relation(fields: [storeId], references: [id])
+  name      String
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  stockLevels   StockLevel[]
+  transfersFrom StockTransfer[] @relation("TransferFrom")
+  transfersTo   StockTransfer[] @relation("TransferTo")
+
+  @@unique([storeId, name])
+}
+
+enum TransferStatus {
+  REQUESTED
+  APPROVED
+  IN_TRANSIT
+  COMPLETED
+  CANCELLED
+}
+
+model StockTransfer {
+  id              String         @id @default(cuid())
+  storeId         String
+  store           Store          @relation(fields: [storeId], references: [id])
+  fromWarehouseId String
+  fromWarehouse   Warehouse      @relation("TransferFrom", fields: [fromWarehouseId], references: [id])
+  toWarehouseId   String
+  toWarehouse     Warehouse      @relation("TransferTo", fields: [toWarehouseId], references: [id])
+  productId       String
+  product         Product        @relation(fields: [productId], references: [id])
+  quantity        Int
+  status          TransferStatus @default(REQUESTED)
+  requestedById   String
+  requestedBy     User           @relation("TransferRequestedBy", fields: [requestedById], references: [id])
+  approvedById    String?
+  approvedBy      User?          @relation("TransferApprovedBy", fields: [approvedById], references: [id])
+  reason          String?
+  createdAt       DateTime       @default(now())
+  completedAt     DateTime?
+
+  @@index([storeId, status])
+}
+
 model StockLevel {
-  id               String   @id @default(cuid())
+  id               String     @id @default(cuid())
   storeId          String
-  store            Store    @relation(fields: [storeId], references: [id])
-  productId        String   @unique
-  product          Product  @relation(fields: [productId], references: [id])
-  quantityOnHand   Int      @default(0)
-  quantityReserved Int      @default(0)
-  reorderThreshold Int      @default(0)
-  updatedAt        DateTime @updatedAt
+  store            Store      @relation(fields: [storeId], references: [id])
+  productId        String
+  product          Product    @relation("ProductStockLevels", fields: [productId], references: [id])
+  warehouseId      String?
+  warehouse        Warehouse? @relation(fields: [warehouseId], references: [id])
+  quantityOnHand   Int        @default(0)
+  quantityReserved Int        @default(0)
+  reorderThreshold Int        @default(0)
+  updatedAt        DateTime   @updatedAt
+  products         Product[]
 
   @@index([storeId, productId])
 }

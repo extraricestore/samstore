@@ -60,11 +60,21 @@ export class ProductAdminService {
         priceMinor: input.priceMinor,
         isActive: input.isActive ?? true,
         categoryId,
-        ...(input.stock !== undefined
-          ? { stockLevel: { create: { storeId, quantityOnHand: input.stock } } }
-          : {}),
       },
     });
+
+    // Stock: attach to the store's default warehouse (or a legacy warehouse-less row if none).
+    if (input.stock !== undefined) {
+      const defaultWarehouse = await prisma.warehouse.findFirst({ where: { storeId, isDefault: true } });
+      await prisma.stockLevel.create({
+        data: {
+          storeId,
+          productId: product.id,
+          warehouseId: defaultWarehouse?.id ?? null,
+          quantityOnHand: input.stock,
+        },
+      });
+    }
     return { ok: true, value: { id: product.id } };
   }
 
@@ -96,11 +106,23 @@ export class ProductAdminService {
         },
       });
       if (input.stock !== undefined) {
-        await tx.stockLevel.upsert({
-          where: { productId },
-          update: { quantityOnHand: input.stock, storeId },
-          create: { productId, storeId, quantityOnHand: input.stock },
+        // Update stock on the default warehouse (or warehouse-less legacy row) — first match.
+        const defaultWarehouse = await tx.warehouse.findFirst({ where: { storeId, isDefault: true } });
+        const existing = await tx.stockLevel.findFirst({
+          where: { storeId, productId, warehouseId: defaultWarehouse?.id ?? null },
         });
+        if (existing) {
+          await tx.stockLevel.update({ where: { id: existing.id }, data: { quantityOnHand: input.stock } });
+        } else if (defaultWarehouse) {
+          await tx.stockLevel.create({ data: { storeId, productId, warehouseId: defaultWarehouse.id, quantityOnHand: input.stock } });
+        } else {
+          const anyRow = await tx.stockLevel.findFirst({ where: { storeId, productId } });
+          if (anyRow) {
+            await tx.stockLevel.update({ where: { id: anyRow.id }, data: { quantityOnHand: input.stock } });
+          } else {
+            await tx.stockLevel.create({ data: { storeId, productId, quantityOnHand: input.stock } });
+          }
+        }
       }
     });
     return { ok: true, value: { id: productId } };

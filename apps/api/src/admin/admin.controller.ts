@@ -24,6 +24,7 @@ import { VoucherAdminService } from "./voucher-admin.service.js";
 import { StoreAdminService } from "./store-admin.service.js";
 import { AnalyticsService } from "./analytics.service.js";
 import { TeamService } from "./team.service.js";
+import { WarehouseService } from "./warehouse.service.js";
 import { LoyaltyService } from "../loyalty/loyalty.service.js";
 import { NOTIFICATIONS_SERVICE, type NotificationsService } from "../notifications/notifications.service.js";
 import type { OrderState } from "../domain/order-state.js";
@@ -79,6 +80,7 @@ export class AdminController {
   private readonly storesAdmin = new StoreAdminService();
   private readonly analytics = new AnalyticsService();
   private readonly team = new TeamService();
+  private readonly warehouses = new WarehouseService();
   private readonly loyalty = new LoyaltyService();
 
   constructor(
@@ -461,6 +463,102 @@ export class AdminController {
       data: { status: "ABANDONED" },
     });
     return { marked: result.count, storeId };
+  }
+
+  // ─────────────────────────────── Warehouses / transfers ───────────────────────────────
+
+  /** GET /admin/warehouses — list warehouses. */
+  @Get("warehouses")
+  async listWarehouses(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
+    const user = req.user;
+    requireAdmin(user);
+    const storeId = await this.resolveStoreId(user, headerStoreId);
+    return { warehouses: await this.warehouses.list(storeId), storeId };
+  }
+
+  /** POST /admin/warehouses — create a warehouse (first = default). */
+  @Post("warehouses")
+  async createWarehouse(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Body() body: { name: string },
+    @Headers("x-store-id") headerStoreId?: string,
+  ) {
+    const user = req.user;
+    requireAdmin(user);
+    const storeId = await this.resolveStoreId(user, headerStoreId);
+    const result = await this.warehouses.create(storeId, body.name);
+    if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+    return result.value;
+  }
+
+  /** POST /admin/warehouses/:id/stock — set a product's stock at a warehouse. */
+  @Post("warehouses/:id/stock")
+  async setWarehouseStock(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Param("id") id: string,
+    @Body() body: { productId: string; quantityOnHand: number },
+    @Headers("x-store-id") headerStoreId?: string,
+  ) {
+    const user = req.user;
+    requireAdmin(user);
+    const storeId = await this.resolveStoreId(user, headerStoreId);
+    const result = await this.warehouses.setStock(storeId, id, body.productId, body.quantityOnHand);
+    if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+    return result.value;
+  }
+
+  /** POST /admin/transfers — request a stock transfer. */
+  @Post("transfers")
+  async requestTransfer(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Body() body: { fromWarehouseId: string; toWarehouseId: string; productId: string; quantity: number; reason?: string },
+    @Headers("x-store-id") headerStoreId?: string,
+  ) {
+    const user = req.user;
+    requireAdmin(user);
+    const storeId = await this.resolveStoreId(user, headerStoreId);
+    const result = await this.warehouses.requestTransfer(storeId, body.fromWarehouseId, body.toWarehouseId, body.productId, body.quantity, user.sub, body.reason);
+    if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+    return result.value;
+  }
+
+  /** PATCH /admin/transfers/:id/approve — owner/manager approves. */
+  @Patch("transfers/:id/approve")
+  async approveTransfer(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Param("id") id: string,
+    @Headers("x-store-id") headerStoreId?: string,
+  ) {
+    const user = req.user;
+    requireManage(user);
+    const storeId = await this.resolveStoreId(user, headerStoreId);
+    const result = await this.warehouses.approveTransfer(storeId, id, user.sub);
+    if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+    return result.value;
+  }
+
+  /** PATCH /admin/transfers/:id/complete — moves the stock (owner/manager). */
+  @Patch("transfers/:id/complete")
+  async completeTransfer(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Param("id") id: string,
+    @Headers("x-store-id") headerStoreId?: string,
+  ) {
+    const user = req.user;
+    requireManage(user);
+    const storeId = await this.resolveStoreId(user, headerStoreId);
+    const result = await this.warehouses.completeTransfer(storeId, id);
+    if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+    return result.value;
+  }
+
+  /** GET /admin/transfers — list transfers. */
+  @Get("transfers")
+  async listTransfers(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
+    const user = req.user;
+    requireView(user);
+    const storeId = await this.resolveStoreId(user, headerStoreId);
+    return { transfers: await this.warehouses.listTransfers(storeId), storeId };
   }
 
   // ─────────────────────────────── Team (roles) ───────────────────────────────

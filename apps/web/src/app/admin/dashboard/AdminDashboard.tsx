@@ -13,8 +13,9 @@ import CustomersPanel from "../../../components/admin/CustomersPanel";
 import AnalyticsPanel from "../../../components/admin/AnalyticsPanel";
 import MaintenancePanel from "../../../components/admin/MaintenancePanel";
 import TeamPanel from "../../../components/admin/TeamPanel";
+import WarehousesPanel from "../../../components/admin/WarehousesPanel";
 
-type Tab = "orders" | "products" | "settings" | "vouchers" | "stores" | "customers" | "analytics" | "maintenance" | "team";
+type Tab = "orders" | "products" | "settings" | "vouchers" | "stores" | "customers" | "analytics" | "maintenance" | "team" | "warehouses";
 
 interface MyStore { id: string; name: string; slug: string; role: string; }
 
@@ -84,7 +85,7 @@ export default function AdminDashboard() {
               </select>
             )}
             <ul className="nav nav-pills">
-              {(["orders", "products", "team", "customers", "analytics", "vouchers", "settings", "stores", "maintenance"] as Tab[]).map((t) => (
+              {(["orders", "products", "team", "customers", "analytics", "vouchers", "settings", "warehouses", "stores", "maintenance"] as Tab[]).map((t) => (
                 <li className="nav-item" key={t}>
                   <button
                     className={`nav-link text-capitalize ${tab === t ? "active bg-primary" : "text-light"}`}
@@ -116,6 +117,7 @@ export default function AdminDashboard() {
         {tab === "customers" && <CustomersPanel />}
         {tab === "analytics" && <AnalyticsPanel />}
         {tab === "maintenance" && <MaintenancePanel />}
+        {tab === "warehouses" && <WarehousesPanel />}
         {tab === "stores" && <StoresPanel />}
       </main>
     </div>
