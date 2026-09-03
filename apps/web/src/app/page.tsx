@@ -100,6 +100,11 @@ export default function Home() {
       <footer className="py-4 text-center text-muted small">
         <div className="container">
           <i className="bi bi-shop me-1"></i>Sam&apos;s Store · Cash on delivery · Serving your neighborhood
+          <div className="mt-2">
+            <Link href="/ai-tools" className="text-muted text-decoration-none">
+              <i className="bi bi-stars me-1"></i>Free AI Tools
+            </Link>
+          </div>
         </div>
       </footer>
     </div>
