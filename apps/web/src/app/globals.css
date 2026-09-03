@@ -46,3 +46,11 @@ body {
 .badge.text-bg-primary {
   background-color: var(--sam-primary) !important;
 }
+
+/* Landing page hero */
+.hero {
+  background: linear-gradient(135deg, #2b2118 0%, #4a342a 60%, #d94f2b 130%);
+}
+.hero h1 {
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+}
