@@ -3,11 +3,13 @@
 import { prisma } from "../persistence/prisma-repositories.js";
 import { assertTransition, paymentEffectFor, type OrderState } from "../domain/order-state.js";
 import { LoyaltyService } from "../loyalty/loyalty.service.js";
+import type { NotificationsService } from "../notifications/notifications.service.js";
 import type { ApiError } from "@sam-store/contracts";
 
 export type AdminResult<T> = { ok: true; value: T } | { ok: false; error: ApiError };
 
 export class OrderAdminService {
+  constructor(private readonly notify?: NotificationsService) {}
   /** Transition an order's status (forward state machine; reason for manual overrides). */
   async transition(
     storeId: string,
@@ -52,6 +54,17 @@ export class OrderAdminService {
     // Loyalty: award points when the order is delivered (and linked to a customer).
     if (toStatus === "DELIVERED") {
       await this.awardLoyalty(orderId);
+    }
+
+    // Notifications: status change → customer (Messenger suppressed until connected; SMS/email recorded).
+    if (this.notify) {
+      await this.notify.notify({
+        storeId,
+        customerPhone: order.customerPhone,
+        psid: null, // no verified PSID yet — suppressed path
+        template: toStatus === "OUT_FOR_DELIVERY" ? "order_out_for_delivery" : "order_status",
+        data: { orderNumber: order.orderNumber, status: toStatus },
+      });
     }
 
     return { ok: true, value: { id: orderId, status: toStatus } };

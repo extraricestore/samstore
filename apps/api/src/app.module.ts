@@ -17,6 +17,7 @@ import { VoucherPublicService } from "./voucher/voucher-public.service.js";
 import { CustomerAuthService, CUSTOMER_AUTH_SERVICE } from "./auth/customer-auth.service.js";
 import { CustomerAuthController } from "./auth/customer-auth.controller.js";
 import { LoyaltyService, LOYALTY_SERVICE } from "./loyalty/loyalty.service.js";
+import { NotificationsService, NOTIFICATIONS_SERVICE } from "./notifications/notifications.service.js";
 import { verifyToken } from "./auth/auth.domain.js";
 import {
   PrismaStoreRepository,
@@ -42,6 +43,11 @@ const CLAIM_SECRET = process.env.CLAIM_SIGNING_SECRET ?? "dev-only-in-memory-sec
     {
       provide: LOYALTY_SERVICE,
       useFactory: () => new LoyaltyService(),
+    },
+    {
+      provide: NOTIFICATIONS_SERVICE,
+      inject: ["MESSENGER_SERVICE"],
+      useFactory: (messenger: MessengerService) => new NotificationsService(messenger),
     },
     {
       provide: ORDER_LOOKUP_SERVICE,

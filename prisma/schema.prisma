@@ -143,6 +143,7 @@ model Store {
   auditLogs      AuditLog[]
   vouchers       Voucher[]
   loyaltyEntries LoyaltyEntry[]
+  notifications  NotificationLog[]
 }
 
 model StoreSettings {
@@ -256,9 +257,9 @@ model Cart {
   storeId    String? // null until the first product binds the cart to a store
   store      Store?     @relation(fields: [storeId], references: [id])
   token      String     @unique // high-entropy guest cart token
-  customerId String?    // linked customer once accounts exist
+  customerId String? // linked customer once accounts exist
   status     CartStatus @default(OPEN)
-  expiresAt  DateTime?  // soft-expiry: abandoned carts get released
+  expiresAt  DateTime? // soft-expiry: abandoned carts get released
   createdAt  DateTime   @default(now())
   updatedAt  DateTime   @updatedAt
 
@@ -278,6 +279,22 @@ model CartItem {
   updatedAt      DateTime @updatedAt
 
   @@unique([cartId, productId])
+}
+
+// ─────────────────────────────── Notifications ───────────────────────────────
+
+model NotificationLog {
+  id        String   @id @default(cuid())
+  storeId   String
+  store     Store    @relation(fields: [storeId], references: [id])
+  template  String
+  channel   String // messenger | sms | email
+  recipient String?
+  text      String
+  delivered Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([storeId, createdAt])
 }
 
 // ─────────────────────────────── Loyalty ───────────────────────────────

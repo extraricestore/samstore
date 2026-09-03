@@ -24,6 +24,7 @@ import { VoucherAdminService } from "./voucher-admin.service.js";
 import { StoreAdminService } from "./store-admin.service.js";
 import { AnalyticsService } from "./analytics.service.js";
 import { LoyaltyService } from "../loyalty/loyalty.service.js";
+import { NOTIFICATIONS_SERVICE, type NotificationsService } from "../notifications/notifications.service.js";
 import type { OrderState } from "../domain/order-state.js";
 
 const ADMIN_ROLES = ["STORE_OWNER", "PLATFORM_ADMIN", "MANAGER", "STAFF"];
@@ -51,14 +52,19 @@ function requireAdmin(user: AuthPrincipal | undefined): asserts user is AuthPrin
 @UseGuards(JwtAuthGuard)
 export class AdminController {
   private readonly productsAdmin = new ProductAdminService();
-  private readonly ordersAdmin = new OrderAdminService();
+  private readonly ordersAdmin: OrderAdminService;
   private readonly settingsAdmin = new StoreSettingsService();
   private readonly vouchersAdmin = new VoucherAdminService();
   private readonly storesAdmin = new StoreAdminService();
   private readonly analytics = new AnalyticsService();
   private readonly loyalty = new LoyaltyService();
 
-  constructor(@Inject(AUTH_SERVICE) private readonly auth: AuthService) {}
+  constructor(
+    @Inject(AUTH_SERVICE) private readonly auth: AuthService,
+    @Inject(NOTIFICATIONS_SERVICE) notifications: NotificationsService,
+  ) {
+    this.ordersAdmin = new OrderAdminService(notifications);
+  }
 
   /**
    * Resolve the tenant store for a request:
