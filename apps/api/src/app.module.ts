@@ -11,6 +11,8 @@ import { AdminController } from "./admin/admin.controller.js";
 import { JwtAuthGuard } from "./auth/auth.guard.js";
 import type { AuthConfig } from "./auth/auth.domain.js";
 import { MessengerService, SuppressedMessengerProvider } from "./messenger/messenger.adapter.js";
+import { OrderLookupService, ORDER_LOOKUP_SERVICE } from "./orders/order-lookup.service.js";
+import { OrderLookupController } from "./orders/order-lookup.controller.js";
 import {
   PrismaStoreRepository,
   PrismaCatalogRepository,
@@ -22,8 +24,12 @@ import {
 const CLAIM_SECRET = process.env.CLAIM_SIGNING_SECRET ?? "dev-only-in-memory-secret-0123456789";
 
 @Module({
-  controllers: [CheckoutController, PublicStoreController, CartController, AuthController, AdminController],
+  controllers: [CheckoutController, PublicStoreController, CartController, AuthController, AdminController, OrderLookupController],
   providers: [
+    {
+      provide: ORDER_LOOKUP_SERVICE,
+      useFactory: () => new OrderLookupService(CLAIM_SECRET),
+    },
     {
       provide: AUTH_SERVICE,
       useFactory: () =>
@@ -53,6 +59,7 @@ const CLAIM_SECRET = process.env.CLAIM_SIGNING_SECRET ?? "dev-only-in-memory-sec
       // CheckoutService is framework-free by design (tests construct it directly).
       // Prisma-backed repositories hit the real Postgres (Supabase).
       provide: CHECKOUT_SERVICE,
+      inject: ["MESSENGER_SERVICE"],
       useFactory: (messenger: MessengerService) =>
         new CheckoutService(
           new PrismaStoreRepository(),

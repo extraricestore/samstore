@@ -5,6 +5,7 @@ import type { ProductDTO, PublicStoreDTO, CheckoutResponse, CartWithItemsDTO } f
 import ProductCard from "../components/ProductCard";
 import CartDrawer, { type CartLineUI } from "../components/CartDrawer";
 import CheckoutForm from "../components/CheckoutForm";
+import OrderTracker from "../components/OrderTracker";
 import {
   ensureCartToken,
   getStoredCartToken,
@@ -153,7 +154,12 @@ export default function Storefront({ store, products }: StorefrontProps) {
             <p className="mb-1">Your order number is</p>
             <h3 className="fw-bold text-primary">{lastOrder.orderNumber}</h3>
             <p className="text-muted mb-4">Total {toPesos(lastOrder.totalMinor)} · Cash on delivery</p>
-            <button className="btn btn-outline-secondary" onClick={() => setView("menu")}>Back to menu</button>
+            <p className="small text-muted">Keep this link to track your order:</p>
+            <code className="d-block mb-3 small text-break">{lastOrder.claimToken}</code>
+            <OrderTracker initialToken={lastOrder.claimToken} />
+            <div className="mt-4">
+              <button className="btn btn-outline-secondary" onClick={() => setView("menu")}>Back to menu</button>
+            </div>
           </div>
         ) : view === "checkout" ? (
           <CheckoutForm
