@@ -23,11 +23,16 @@ import { StoreSettingsService } from "./store-settings.service.js";
 import { VoucherAdminService } from "./voucher-admin.service.js";
 import { StoreAdminService } from "./store-admin.service.js";
 import { AnalyticsService } from "./analytics.service.js";
+import { TeamService } from "./team.service.js";
 import { LoyaltyService } from "../loyalty/loyalty.service.js";
 import { NOTIFICATIONS_SERVICE, type NotificationsService } from "../notifications/notifications.service.js";
 import type { OrderState } from "../domain/order-state.js";
 
 const ADMIN_ROLES = ["STORE_OWNER", "PLATFORM_ADMIN", "MANAGER", "STAFF"];
+/** Roles that can also view orders (sales agents work the order/inbox surface). */
+const VIEW_ROLES = [...ADMIN_ROLES, "SALES_AGENT"] as const;
+/** Roles that can manage the store itself (team invites, store settings). */
+const MANAGE_ROLES = ["STORE_OWNER", "PLATFORM_ADMIN"] as const;
 const DEMO_STORE_ID = "cmtifdks2000094ic1j9w8th7"; // seeded sam-store (fallback for legacy demo users)
 
 function statusFor(error: ApiError): HttpStatus {
@@ -46,6 +51,22 @@ function requireAdmin(user: AuthPrincipal | undefined): asserts user is AuthPrin
   if (!ADMIN_ROLES.includes(user.role)) throw new HttpException({ type: "forbidden", message: "Not authorized" }, HttpStatus.FORBIDDEN);
 }
 
+/** Allow VIEW_ROLES (orders/sales surface) — sales agents included. */
+function requireView(user: AuthPrincipal | undefined): asserts user is AuthPrincipal {
+  if (!user) throw new HttpException({ type: "unauthorized", message: "Not authenticated" }, HttpStatus.UNAUTHORIZED);
+  if (!(VIEW_ROLES as readonly string[]).includes(user.role)) {
+    throw new HttpException({ type: "forbidden", message: "Not authorized" }, HttpStatus.FORBIDDEN);
+  }
+}
+
+/** Store-management surface only (team invites, settings, products, etc.). */
+function requireManage(user: AuthPrincipal | undefined): asserts user is AuthPrincipal {
+  requireAdmin(user);
+  if (!(MANAGE_ROLES as readonly string[]).includes(user.role)) {
+    throw new HttpException({ type: "forbidden", message: "Owner or platform admin only" }, HttpStatus.FORBIDDEN);
+  }
+}
+
 // Admin endpoints — JWT-protected, tenant-scoped via membership + X-Store-Id.
 
 @Controller("admin")
@@ -57,6 +78,7 @@ export class AdminController {
   private readonly vouchersAdmin = new VoucherAdminService();
   private readonly storesAdmin = new StoreAdminService();
   private readonly analytics = new AnalyticsService();
+  private readonly team = new TeamService();
   private readonly loyalty = new LoyaltyService();
 
   constructor(
@@ -144,7 +166,7 @@ export class AdminController {
   @Get("orders")
   async orders(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
     const user = req.user;
-    requireAdmin(user);
+    requireView(user);
     const storeId = await this.resolveStoreId(user, headerStoreId);
     const list = await prisma.order.findMany({
       where: { storeId },
@@ -162,7 +184,7 @@ export class AdminController {
   @Get("orders/:id")
   async orderDetail(@Req() req: Request & { user?: AuthPrincipal }, @Param("id") id: string, @Headers("x-store-id") headerStoreId?: string) {
     const user = req.user;
-    requireAdmin(user);
+    requireView(user);
     const storeId = await this.resolveStoreId(user, headerStoreId);
     const detail = await this.ordersAdmin.detail(storeId, id);
     if (!detail) throw new HttpException({ type: "not_found", message: "Order not found" }, HttpStatus.NOT_FOUND);
@@ -178,8 +200,16 @@ export class AdminController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    requireAdmin(user);
+    requireView(user);
     const storeId = await this.resolveStoreId(user, headerStoreId);
+    // Role-based transition permissions: sales agents may only move delivery states.
+    const AGENT_ALLOWED = ["OUT_FOR_DELIVERY", "DELIVERED", "FAILED_DELIVERY"];
+    if (user.role === "SALES_AGENT" && !AGENT_ALLOWED.includes(body.toStatus)) {
+      throw new HttpException(
+        { type: "forbidden", message: "Sales agents may only update delivery states" },
+        HttpStatus.FORBIDDEN,
+      );
+    }
     const result = await this.ordersAdmin.transition(storeId, id, body.toStatus, body.reason, {
       type: user.role,
       id: user.sub,
@@ -431,5 +461,96 @@ export class AdminController {
       data: { status: "ABANDONED" },
     });
     return { marked: result.count, storeId };
+  }
+
+  // ─────────────────────────────── Team (roles) ───────────────────────────────
+
+  /** GET /admin/team — active store members. */
+  @Get("team")
+  async listTeam(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
+    const user = req.user;
+    requireView(user); // everyone in the store can see who's on the team
+    const storeId = await this.resolveStoreId(user, headerStoreId);
+    return { members: await this.team.list(storeId), storeId };
+  }
+
+  /** POST /admin/team/invite — invite MANAGER / STAFF / SALES_AGENT. */
+  @Post("team/invite")
+  async inviteMember(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Body() body: { email: string; name?: string; role: string },
+    @Headers("x-store-id") headerStoreId?: string,
+  ) {
+    const user = req.user;
+    requireManage(user);
+    const storeId = await this.resolveStoreId(user, headerStoreId);
+    const result = await this.team.invite(storeId, body.email, body.name ?? null, body.role);
+    if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+    return result.value;
+  }
+
+  /** PATCH /admin/team/:userId/role — change a member's role. */
+  @Patch("team/:userId/role")
+  async changeMemberRole(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Param("userId") userId: string,
+    @Body() body: { role: string },
+    @Headers("x-store-id") headerStoreId?: string,
+  ) {
+    const user = req.user;
+    requireManage(user);
+    const storeId = await this.resolveStoreId(user, headerStoreId);
+    const result = await this.team.changeRole(storeId, userId, body.role);
+    if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+    return result.value;
+  }
+
+  /** DELETE /admin/team/:userId — deactivate a member. */
+  @Delete("team/:userId")
+  async deactivateMember(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Param("userId") userId: string,
+    @Headers("x-store-id") headerStoreId?: string,
+  ) {
+    const user = req.user;
+    requireManage(user);
+    const storeId = await this.resolveStoreId(user, headerStoreId);
+    const result = await this.team.deactivate(storeId, userId);
+    if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+    return result.value;
+  }
+
+  // ─────────────────────────────── Customer approval (CRM) ───────────────────────────────
+
+  /** PATCH /admin/customers/:id/approval — approve/reject/suspend a store customer (audited). */
+  @Patch("customers/:id/approval")
+  async setCustomerApproval(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Param("id") id: string,
+    @Body() body: { status: "PENDING" | "APPROVED" | "REJECTED" | "SUSPENDED"; reason?: string },
+    @Headers("x-store-id") headerStoreId?: string,
+  ) {
+    const user = req.user;
+    requireAdmin(user);
+    const storeId = await this.resolveStoreId(user, headerStoreId);
+    const sc = await prisma.storeCustomer.findFirst({ where: { id, storeId } });
+    if (!sc) throw new HttpException({ type: "not_found", message: "Customer not found" }, HttpStatus.NOT_FOUND);
+
+    const updated = await prisma.storeCustomer.update({
+      where: { id },
+      data: { approvalStatus: body.status },
+    });
+    await prisma.auditLog.create({
+      data: {
+        storeId,
+        actorType: user.role,
+        actorId: user.sub,
+        action: "CUSTOMER_APPROVAL",
+        entityType: "StoreCustomer",
+        entityId: id,
+        after: { status: body.status, reason: body.reason ?? null },
+      },
+    });
+    return { id, approvalStatus: updated.approvalStatus };
   }
 }

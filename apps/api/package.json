@@ -7,7 +7,7 @@
   "scripts": {
     "start": "tsx src/main.ts",
     "start:dev": "tsx watch src/main.ts",
-    "test": "node --import tsx --test src/domain/*.test.ts src/checkout/*.test.ts src/cart/*.test.ts src/auth/*.test.ts src/messenger/*.test.ts src/notifications/*.test.ts",
+    "test": "node --import tsx --test src/domain/*.test.ts src/checkout/*.test.ts src/cart/*.test.ts src/auth/*.test.ts src/messenger/*.test.ts src/notifications/*.test.ts src/admin/*.test.ts",
     "test:unit": "node --import tsx --test src/domain/*.test.ts",
     "typecheck": "tsc --noEmit"
   },

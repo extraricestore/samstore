@@ -15,6 +15,14 @@ interface CustomerRow {
   joinedAt: string;
 }
 
+const APPROVAL_BADGE: Record<string, string> = {
+  NOT_REQUIRED: "text-bg-secondary",
+  PENDING: "text-bg-warning",
+  APPROVED: "text-bg-success",
+  REJECTED: "text-bg-danger",
+  SUSPENDED: "text-bg-danger",
+};
+
 export default function CustomersPanel() {
   const [customers, setCustomers] = useState<CustomerRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -36,6 +44,15 @@ export default function CustomersPanel() {
 
   useEffect(() => { load(); }, [load]);
 
+  const setApproval = async (id: string, status: string) => {
+    await fetch(`${API_URL}/admin/customers/${id}/approval`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...adminHeaders() },
+      body: JSON.stringify({ status }),
+    });
+    await load();
+  };
+
   return (
     <div>
       <h1 className="h4 mb-3">Customers &amp; Loyalty</h1>
@@ -52,6 +69,7 @@ export default function CustomersPanel() {
               <th>Contact</th>
               <th className="text-end">Loyalty points</th>
               <th>Status</th>
+              <th>Approval</th>
               <th>Joined</th>
             </tr>
           </thead>
@@ -66,6 +84,26 @@ export default function CustomersPanel() {
                   </span>
                 </td>
                 <td><span className="badge text-bg-secondary">{c.approvalStatus}</span></td>
+                <td>
+                  {c.approvalStatus === "PENDING" ? (
+                    <div className="d-flex gap-1">
+                      <button className="btn btn-sm btn-outline-success" onClick={() => setApproval(c.id, "APPROVED")}>
+                        <i className="bi bi-check-lg"></i>
+                      </button>
+                      <button className="btn btn-sm btn-outline-danger" onClick={() => setApproval(c.id, "REJECTED")}>
+                        <i className="bi bi-x-lg"></i>
+                      </button>
+                    </div>
+                  ) : c.approvalStatus === "APPROVED" ? (
+                    <button className="btn btn-sm btn-outline-warning" onClick={() => setApproval(c.id, "SUSPENDED")}>
+                      Suspend
+                    </button>
+                  ) : (
+                    <button className="btn btn-sm btn-outline-secondary" onClick={() => setApproval(c.id, "APPROVED")}>
+                      Re-approve
+                    </button>
+                  )}
+                </td>
                 <td className="small text-muted">{new Date(c.joinedAt).toLocaleDateString()}</td>
               </tr>
             ))}
