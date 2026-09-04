@@ -20,6 +20,10 @@ import { LoyaltyService, LOYALTY_SERVICE } from "./loyalty/loyalty.service.js";
 import { NotificationsService, NOTIFICATIONS_SERVICE } from "./notifications/notifications.service.js";
 import { PosService, POS_SERVICE } from "./pos/pos.service.js";
 import { PosController } from "./pos/pos.controller.js";
+import { PaymentsService, PAYMENTS_SERVICE } from "./payments/payments.service.js";
+import { PaymentsController } from "./payments/payments.controller.js";
+import { CreditService, CREDIT_SERVICE } from "./credit/credit.service.js";
+import { CreditController } from "./credit/credit.controller.js";
 import { verifyToken } from "./auth/auth.domain.js";
 import {
   PrismaStoreRepository,
@@ -32,8 +36,16 @@ import {
 const CLAIM_SECRET = process.env.CLAIM_SIGNING_SECRET ?? "dev-only-in-memory-secret-0123456789";
 
 @Module({
-  controllers: [CheckoutController, PublicStoreController, CartController, AuthController, AdminController, OrderLookupController, CustomerAuthController, PosController],
+  controllers: [CheckoutController, PublicStoreController, CartController, AuthController, AdminController, OrderLookupController, CustomerAuthController, PosController, PaymentsController, CreditController],
   providers: [
+    {
+      provide: CREDIT_SERVICE,
+      useFactory: () => new CreditService(),
+    },
+    {
+      provide: PAYMENTS_SERVICE,
+      useFactory: () => new PaymentsService(),
+    },
     {
       provide: POS_SERVICE,
       useFactory: () => new PosService(),
@@ -93,8 +105,9 @@ const CLAIM_SECRET = process.env.CLAIM_SIGNING_SECRET ?? "dev-only-in-memory-sec
       // Prisma-backed repositories hit the real Postgres (Supabase).
       provide: CHECKOUT_SERVICE,
       inject: ["MESSENGER_SERVICE", "VOUCHER_PUBLIC_SERVICE", LOYALTY_SERVICE],
-      useFactory: (messenger: MessengerService, voucher: VoucherPublicService, loyalty: LoyaltyService) =>
-        new CheckoutService(
+      useFactory: (messenger: MessengerService, voucher: VoucherPublicService, loyalty: LoyaltyService) => {
+      const creditSvc = new CreditService();
+      return new CheckoutService(
           new PrismaStoreRepository(),
           new PrismaCatalogRepository(),
           new PrismaCartRepository(),
@@ -123,7 +136,13 @@ const CLAIM_SECRET = process.env.CLAIM_SIGNING_SECRET ?? "dev-only-in-memory-sec
               return null;
             }
           },
-        ),
+          {
+            // CreditGateway — approved customers pay on utang up to the store limit.
+            check: (storeId, storeCustomerId, amountMinor) => creditSvc.checkCredit(storeId, storeCustomerId, amountMinor),
+            record: (orderId, storeId, storeCustomerId, amountMinor) => creditSvc.recordPurchase(orderId, storeId, storeCustomerId, amountMinor),
+          },
+        );
+      },
     },
   ],
   exports: [CHECKOUT_SERVICE, "MESSENGER_SERVICE"],

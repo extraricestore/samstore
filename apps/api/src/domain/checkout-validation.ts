@@ -39,8 +39,8 @@ export function validateCheckoutInput(input: CheckoutRequest): ValidationResult 
     errors.push("notes must be at most 500 characters");
   }
 
-  if (input.paymentMethod !== "cod") {
-    errors.push("paymentMethod must be 'cod' (slice scope)");
+  if (input.paymentMethod !== undefined && input.paymentMethod !== "cod" && input.paymentMethod !== "credit") {
+    errors.push("paymentMethod must be 'cod' or 'credit'");
   }
 
   if (typeof input.idempotencyKey !== "string" || input.idempotencyKey.trim().length < 8) {

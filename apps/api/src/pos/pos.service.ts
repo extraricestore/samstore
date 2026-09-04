@@ -8,6 +8,7 @@ import { PrismaOrderSequenceRepository } from "../persistence/prisma-repositorie
 import { computeOrderTotals } from "../domain/pricing.js";
 import { formatOrderNumber } from "../domain/order-number.js";
 import { randomId } from "../persistence/repositories.js";
+import { CreditService } from "../credit/credit.service.js";
 import type { ApiError, PosSellRequest, PosSellResponse } from "@sam-store/contracts";
 
 export type PosResult<T> = { ok: true; value: T } | { ok: false; error: ApiError };
@@ -16,6 +17,7 @@ export const POS_SERVICE = Symbol("POS_SERVICE");
 
 export class PosService {
   private readonly sequences = new PrismaOrderSequenceRepository();
+  private readonly credit = new CreditService();
 
   async sell(storeId: string, actorId: string, input: PosSellRequest): Promise<PosResult<PosSellResponse>> {
     // 1. Validate items
@@ -61,12 +63,15 @@ export class PosService {
       return { ok: false, error: { type: "conflict", message: e instanceof Error ? e.message : "Invalid pricing" } };
     }
 
-    // 4. Optional customer link (must belong to the store)
+    // 4. Optional customer link (must belong to the store); credit REQUIRES a customer
     let storeCustomerId: string | null = null;
     if (input.customerId) {
       const sc = await prisma.storeCustomer.findFirst({ where: { storeId, id: input.customerId } });
       if (!sc) return { ok: false, error: { type: "not_found", message: "Customer not found in this store" } };
       storeCustomerId = sc.id;
+    }
+    if (input.paymentMethod === "credit" && !storeCustomerId) {
+      return { ok: false, error: { type: "validation", errors: ["Credit sales require a linked customer"] } };
     }
 
     // 5. Store + sequence → order number
@@ -119,6 +124,11 @@ export class PosService {
       await tx.orderStatusHistory.create({
         data: { orderId: id, storeId, toStatus: "COMPLETED", actorType: "pos", actorId: actorId },
       });
+      // Credit sale → ledger entry (throws roll back the whole sale)
+      if (input.paymentMethod === "credit" && storeCustomerId) {
+        const cr = await this.credit.sellOnCredit(tx as never, storeId, storeCustomerId, id, totals.totalMinor, actorId);
+        if (!cr.ok) throw new Error("message" in cr.error ? cr.error.message : (cr.error as { errors?: string[] }).errors?.[0] ?? "Credit declined");
+      }
       // Decrement stock (prefer default warehouse, then any level)
       for (const it of input.items) {
         const p = products.find((x) => x.id === it.productId)!;

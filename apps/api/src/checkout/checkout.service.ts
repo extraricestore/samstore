@@ -41,6 +41,14 @@ export interface LoyaltyGateway {
   recordRedemption(orderId: string, storeId: string, customerId: string, storeCustomerId: string, points: number): Promise<void>;
 }
 
+/** Optional credit (utang) integration — approved customers pay on credit up to limit. */
+export interface CreditGateway {
+  check(storeId: string, storeCustomerId: string, amountMinor: number): Promise<
+    { ok: true } | { ok: false; message: string }
+  >;
+  record(orderId: string, storeId: string, storeCustomerId: string, amountMinor: number): Promise<void>;
+}
+
 /** DI token — explicit, so dependency resolution doesn't rely on emitDecoratorMetadata. */
 export const CHECKOUT_SERVICE = Symbol("CHECKOUT_SERVICE");
 
@@ -56,6 +64,7 @@ export class CheckoutService {
     private readonly voucher?: VoucherGateway,
     private readonly loyalty?: LoyaltyGateway,
     private readonly resolveCustomer?: (customerToken: string) => Promise<string | null>,
+    private readonly credit?: CreditGateway,
   ) {}
 
   async checkout(request: CheckoutRequest): Promise<CheckoutResult> {
@@ -208,6 +217,21 @@ export class CheckoutService {
     }
     const finalTotal = totals.totalMinor - discountMinor;
 
+    // 6d. Payment method: credit requires an approved customer within limit.
+    const paymentMethod = request.paymentMethod ?? "cod";
+    if (paymentMethod === "credit") {
+      if (!storeCustomerId) {
+        return { ok: false, error: { type: "validation", errors: ["Credit checkout requires a customer account"] } };
+      }
+      if (!this.credit) {
+        return { ok: false, error: { type: "conflict", message: "Credit is unavailable" } };
+      }
+      const creditCheck = await this.credit.check(store.id, storeCustomerId, finalTotal);
+      if (!creditCheck.ok) {
+        return { ok: false, error: { type: "conflict", message: creditCheck.message } };
+      }
+    }
+
     // 7. Order number from store-scoped sequence
     const seq = await this.sequences.nextOrderSequence(store.id);
     const orderNumber = formatOrderNumber(store.slug, seq);
@@ -244,11 +268,11 @@ export class CheckoutService {
         items,
         priceChanges: revalidated.priceChanges,
         store: { slug: store.slug, name: store.name },
-        paymentMethod: "cod",
+        paymentMethod,
         ...(request.voucherCode ? { voucherCode: request.voucherCode.toUpperCase(), discountMinor } : {}),
         ...(loyaltyPoints > 0 ? { loyaltyPointsRedeemed: loyaltyPoints } : {}),
       },
-      paymentMethod: "cod",
+      paymentMethod,
       paymentStatus: "PENDING",
       idempotencyKey: canonicalKey,
       cartToken: cart.token,
@@ -277,6 +301,11 @@ export class CheckoutService {
     // 9c. Record loyalty redemption (after order exists).
     if (loyaltyPoints > 0 && customerId && storeCustomerId && this.loyalty) {
       await this.loyalty.recordRedemption(created.id, store.id, customerId, storeCustomerId, loyaltyPoints);
+    }
+
+    // 9d. Credit purchase → ledger entry (after order exists).
+    if (paymentMethod === "credit" && storeCustomerId && this.credit) {
+      await this.credit.record(created.id, store.id, storeCustomerId, finalTotal);
     }
 
     // 10. Post-order notification hook (Messenger bridge — suppressed until a store is connected)

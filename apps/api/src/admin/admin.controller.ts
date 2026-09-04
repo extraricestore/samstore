@@ -175,9 +175,9 @@ export class AdminController {
       orderBy: { createdAt: "desc" },
       take: 100,
       select: {
-        id: true, orderNumber: true, status: true, totalMinor: true, currencyCode: true,
-        customerName: true, customerPhone: true, createdAt: true,
-      },
+              id: true, orderNumber: true, status: true, totalMinor: true, currencyCode: true,
+              customerName: true, customerPhone: true, createdAt: true, paymentStatus: true, source: true,
+            },
     });
     return { orders: list, storeId };
   }
@@ -374,6 +374,9 @@ export class AdminController {
         phone: sc.customer.phone,
         approvalStatus: sc.approvalStatus,
         loyaltyPoints: sc.loyaltyBalancePoints,
+        creditApproved: sc.creditApproved,
+        creditLimitMinor: sc.creditLimitMinor,
+        creditBalanceMinor: sc.creditBalanceMinor,
         joinedAt: sc.createdAt,
       })),
       storeId,

@@ -12,6 +12,9 @@ interface CustomerRow {
   phone: string | null;
   approvalStatus: string;
   loyaltyPoints: number;
+  creditApproved: boolean;
+  creditLimitMinor: number;
+  creditBalanceMinor: number;
   joinedAt: string;
 }
 
@@ -27,6 +30,8 @@ export default function CustomersPanel() {
   const [customers, setCustomers] = useState<CustomerRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [approveTarget, setApproveTarget] = useState<CustomerRow | null>(null);
+  const [limitInput, setLimitInput] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -53,6 +58,24 @@ export default function CustomersPanel() {
     await load();
   };
 
+  const approveCredit = async () => {
+    if (!approveTarget) return;
+    const limitMinor = Math.round(parseFloat(limitInput || "0") * 100);
+    const res = await fetch(`${API_URL}/admin/credit/${approveTarget.id}/approve`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...adminHeaders() },
+      body: JSON.stringify({ limitMinor }),
+    });
+    if (res.ok) {
+      setApproveTarget(null);
+      setLimitInput("");
+      await load();
+    } else {
+      const d = await res.json();
+      setError(d?.message ?? "Approve failed");
+    }
+  };
+
   return (
     <div>
       <h1 className="h4 mb-3">Customers &amp; Loyalty</h1>
@@ -70,6 +93,7 @@ export default function CustomersPanel() {
               <th className="text-end">Loyalty points</th>
               <th>Status</th>
               <th>Approval</th>
+              <th>Credit</th>
               <th>Joined</th>
             </tr>
           </thead>
@@ -104,11 +128,45 @@ export default function CustomersPanel() {
                     </button>
                   )}
                 </td>
+                <td>
+                  {c.creditApproved ? (
+                    <span className="badge text-bg-warning">
+                      {c.creditBalanceMinor > 0 ? `₱${(c.creditBalanceMinor / 100).toFixed(2)} owed · ` : ""}₱{(c.creditLimitMinor / 100).toFixed(2)} limit
+                    </span>
+                  ) : (
+                    <button className="btn btn-sm btn-outline-warning" onClick={() => setApproveTarget(c)}>Approve credit</button>
+                  )}
+                </td>
                 <td className="small text-muted">{new Date(c.joinedAt).toLocaleDateString()}</td>
               </tr>
             ))}
           </tbody>
         </table>
+      )}
+
+      {approveTarget && (
+        <>
+          <div className="modal fade show d-block" tabIndex={-1}>
+            <div className="modal-dialog modal-dialog-centered">
+              <div className="modal-content">
+                <div className="modal-header">
+                  <h5 className="modal-title">Approve credit — {approveTarget.name ?? approveTarget.email ?? "Customer"}</h5>
+                  <button type="button" className="btn-close" onClick={() => setApproveTarget(null)}></button>
+                </div>
+                <div className="modal-body">
+                  <label className="form-label small">Credit limit (₱)</label>
+                  <input className="form-control" type="number" min="0" step="0.01" value={limitInput} onChange={(e) => setLimitInput(e.target.value)} placeholder="e.g. 500" />
+                  <div className="form-text">0 = store default limit. Credit disabled if both are 0.</div>
+                </div>
+                <div className="modal-footer">
+                  <button className="btn btn-outline-secondary" onClick={() => setApproveTarget(null)}>Cancel</button>
+                  <button className="btn btn-primary" onClick={approveCredit}>Approve</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="modal-backdrop fade show"></div>
+        </>
       )}
     </div>
   );

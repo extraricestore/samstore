@@ -112,7 +112,8 @@ export interface CheckoutRequest {
   deliverySchedule?: string;
   notes?: string;
   /** slice scope: "cod" only; any other value rejected server-side */
-  paymentMethod: "cod";
+  /** COD for guests/unapproved; "credit" allowed only for approved customers up to limit. */
+  paymentMethod?: "cod" | "credit";
   /** client-generated; same value on retry → same order, no duplicates */
   idempotencyKey: string;
   /** optional voucher code to apply at checkout */

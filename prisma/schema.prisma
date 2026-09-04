@@ -149,6 +149,8 @@ model Store {
   notifications  NotificationLog[]
   warehouses     Warehouse[]
   stockTransfers StockTransfer[]
+  payments       Payment[]
+  creditEntries  CreditEntry[]
 }
 
 model StoreSettings {
@@ -164,6 +166,7 @@ model StoreSettings {
   deliveryEnabled          Boolean  @default(true)
   pickupEnabled            Boolean  @default(false)
   deliveryFeeMinor         Int      @default(0)
+  creditLimitMinor         Int      @default(0) // store-wide utang limit (0 = credit disabled)
   closedStoreMessage       String?
   createdAt                DateTime @default(now())
   updatedAt                DateTime @updatedAt
@@ -357,6 +360,26 @@ model NotificationLog {
   @@index([storeId, createdAt])
 }
 
+// ─────────────────────────────── Payments / receipts ───────────────────────────────
+
+model Payment {
+  id          String   @id @default(cuid())
+  orderId     String?
+  order       Order?   @relation(fields: [orderId], references: [id])
+  storeId     String
+  store       Store    @relation(fields: [storeId], references: [id])
+  method      String // cash | credit | cod_collected
+  amountMinor Int
+  changeMinor Int      @default(0) // cash tendered change (cash sales)
+  receivedAt  DateTime @default(now())
+  type        String   @default("payment") // payment | refund | void
+  note        String?
+  createdBy   String? // actor user id
+
+  @@index([storeId, receivedAt])
+  @@index([orderId])
+}
+
 // ─────────────────────────────── Loyalty ───────────────────────────────
 
 enum LoyaltyEntryType {
@@ -452,6 +475,8 @@ model Order {
   statusHistory   OrderStatusHistory[]
   redemptions     VoucherRedemption[]
   claimTokens     OrderClaimToken[]
+  payments        Payment[]
+  creditEntries   CreditEntry[]
   storeCustomerId String? // linked customer account (optional, guests = null)
   storeCustomer   StoreCustomer?       @relation(fields: [storeCustomerId], references: [id])
   loyaltyEntries  LoyaltyEntry[]
@@ -524,13 +549,34 @@ model StoreCustomer {
   customer             Customer               @relation("GlobalToStore", fields: [customerId], references: [id])
   approvalStatus       CustomerApprovalStatus @default(NOT_REQUIRED)
   loyaltyBalancePoints Int                    @default(0) // loyalty points balance (per-store)
+  creditApproved       Boolean                @default(false) // approved for utang (P3)
+  creditLimitMinor     Int                    @default(0) // per-customer credit limit (0 = store default)
+  creditBalanceMinor   Int                    @default(0) // open balance (positive = owes)
   createdAt            DateTime               @default(now())
   updatedAt            DateTime               @updatedAt
 
   orders  Order[]
   loyalty LoyaltyEntry[]
+  credit  CreditEntry[]
 
   @@unique([storeId, customerId])
+}
+
+model CreditEntry {
+  id              String        @id @default(cuid())
+  storeId         String
+  store           Store         @relation(fields: [storeId], references: [id])
+  storeCustomerId String
+  storeCustomer   StoreCustomer @relation(fields: [storeCustomerId], references: [id])
+  orderId         String?
+  order           Order?        @relation(fields: [orderId], references: [id])
+  type            String // purchase | payment
+  amountMinor     Int // signed: +purchase (debt), -payment (settle)
+  note            String?
+  createdBy       String?
+  createdAt       DateTime      @default(now())
+
+  @@index([storeId, storeCustomerId, createdAt])
 }
 
 model StoreMembership {

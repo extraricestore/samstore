@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { API_URL } from "../../config";
 import { adminHeaders, type AdminOrder } from "../../lib/admin";
+import ReceiptModal from "./ReceiptModal";
 
 const ALLOWED: Record<string, string[]> = {
   RECEIVED: ["CONFIRMED", "CANCELLED"],
@@ -11,6 +12,7 @@ const ALLOWED: Record<string, string[]> = {
   READY: ["OUT_FOR_DELIVERY", "CANCELLED"],
   OUT_FOR_DELIVERY: ["DELIVERED", "FAILED_DELIVERY"],
   DELIVERED: [],
+  COMPLETED: [],
   CANCELLED: [],
   FAILED_DELIVERY: ["OUT_FOR_DELIVERY"],
 };
@@ -22,6 +24,7 @@ const STATUS_BADGE: Record<string, string> = {
   READY: "text-bg-primary",
   OUT_FOR_DELIVERY: "text-bg-dark",
   DELIVERED: "text-bg-success",
+  COMPLETED: "text-bg-success",
   CANCELLED: "text-bg-danger",
   FAILED_DELIVERY: "text-bg-danger",
 };
@@ -33,6 +36,8 @@ export default function OrdersPanel() {
   const [transitioning, setTransitioning] = useState<string | null>(null);
   const [pendingReason, setPendingReason] = useState<{ orderId: string; to: string } | null>(null);
   const [reason, setReason] = useState("");
+  const [receiptOrder, setReceiptOrder] = useState<string | null>(null);
+  const [confirmAction, setConfirmAction] = useState<{ orderId: string; kind: "void" | "refund" } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -58,6 +63,27 @@ export default function OrdersPanel() {
       return;
     }
     await doTransition(orderId, toStatus);
+  };
+
+  const doVoidRefund = async (orderId: string, kind: "void" | "refund", reasonText?: string) => {
+    setTransitioning(orderId);
+    setError(null);
+    try {
+      const res = await fetch(`${API_URL}/admin/orders/${orderId}/${kind}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...adminHeaders() },
+        body: JSON.stringify({ reason: reasonText }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data?.message ?? `${kind} failed`); return; }
+      setConfirmAction(null);
+      setReason("");
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : `${kind} failed`);
+    } finally {
+      setTransitioning(null);
+    }
   };
 
   const doTransition = async (orderId: string, toStatus: string, reasonText?: string) => {
@@ -105,6 +131,7 @@ export default function OrdersPanel() {
               <th>Status</th>
               <th>Update status</th>
               <th>Placed</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -138,6 +165,20 @@ export default function OrdersPanel() {
                     )}
                   </td>
                   <td className="text-muted small">{new Date(o.createdAt).toLocaleString()}</td>
+                  <td className="text-end">
+                    <button className="btn btn-sm btn-outline-secondary me-1" title="Receipt" onClick={() => setReceiptOrder(o.id)}>
+                      <i className="bi bi-receipt"></i>
+                    </button>
+                    {o.status === "COMPLETED" && (
+                      <button
+                        className="btn btn-sm btn-outline-danger"
+                        title="Void/Refund"
+                        onClick={() => setConfirmAction({ orderId: o.id, kind: o.paymentStatus === "COLLECTED" ? "refund" : "void" })}
+                      >
+                        <i className="bi bi-x-circle"></i>
+                      </button>
+                    )}
+                  </td>
                 </tr>
               );
             })}
@@ -181,6 +222,48 @@ export default function OrdersPanel() {
           <div className="modal-backdrop fade show"></div>
         </>
       )}
+
+      {/* Void / refund confirm modal */}
+      {confirmAction && (
+        <>
+          <div className="modal fade show d-block" tabIndex={-1}>
+            <div className="modal-dialog modal-dialog-centered">
+              <div className="modal-content">
+                <div className="modal-header">
+                  <h5 className="modal-title">{confirmAction.kind === "void" ? "Void sale" : "Refund sale"}</h5>
+                  <button type="button" className="btn-close" onClick={() => setConfirmAction(null)}></button>
+                </div>
+                <div className="modal-body">
+                  <p className="small">
+                    {confirmAction.kind === "void"
+                      ? "This reverses the sale and restores stock. Only uncollected POS sales can be voided."
+                      : "This records a refund and cancels the order. Stock is not restored."}
+                  </p>
+                  <input
+                    className="form-control form-control-sm"
+                    placeholder="Reason (optional)"
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                  />
+                </div>
+                <div className="modal-footer">
+                  <button type="button" className="btn btn-outline-secondary" onClick={() => setConfirmAction(null)}>Cancel</button>
+                  <button
+                    className="btn btn-danger"
+                    disabled={transitioning === confirmAction.orderId}
+                    onClick={() => doVoidRefund(confirmAction.orderId, confirmAction.kind, reason)}
+                  >
+                    {transitioning === confirmAction.orderId ? "Working…" : `Confirm ${confirmAction.kind}`}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="modal-backdrop fade show"></div>
+        </>
+      )}
+
+      {receiptOrder && <ReceiptModal orderId={receiptOrder} onClose={() => setReceiptOrder(null)} />}
     </div>
   );
 }
