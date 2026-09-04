@@ -12,6 +12,7 @@ import {
   Post,
   Query,
   Req,
+  Res,
   UseGuards,
 } from "@nestjs/common";
 import type { ApiError } from "@sam-store/contracts";
@@ -389,13 +390,23 @@ export class AdminController {
     return result.value;
   }
 
-  /** GET /admin/customers — store customers with loyalty balances. */
+  /** GET /admin/customers — store customers. Filters: search, approvalStatus, onlyUtang. */
   @Get("customers")
-  async listCustomers(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
+  async listCustomers(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Query("search") search?: string,
+    @Query("approvalStatus") approvalStatus?: string,
+    @Query("onlyUtang") onlyUtang?: string,
+    @Headers("x-store-id") headerStoreId?: string,
+  ) {
     const user = req.user;
     requireAdmin(user);
     const storeId = await this.resolveStoreId(user, headerStoreId);
-    const customers = await this.loyalty.adminCustomers(storeId);
+    const customers = await this.loyalty.adminCustomers(storeId, {
+      search,
+      approvalStatus,
+      onlyUtang: onlyUtang === "true",
+    });
     return {
       customers: customers.map((sc) => ({
         id: sc.id,
@@ -412,6 +423,46 @@ export class AdminController {
       })),
       storeId,
     };
+  }
+
+  /** GET /admin/customers/export.csv — customer list + balances (owner/manager). (Must precede customers/:id.) */
+  @Get("customers/export.csv")
+  async exportCustomersCsv(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string, @Res() res?: any) {
+    const user = req.user;
+    requireAdmin(user);
+    const storeId = await this.resolveStoreId(user, headerStoreId);
+    const customers = await this.loyalty.adminCustomers(storeId, {});
+    const rows = customers.map((sc) => ({
+      name: sc.customer.name ?? "",
+      email: sc.customer.email ?? "",
+      phone: sc.customer.phone ?? "",
+      approvalStatus: sc.approvalStatus,
+      loyaltyPoints: sc.loyaltyBalancePoints,
+      creditApproved: sc.creditApproved,
+      creditLimitPesos: (sc.creditLimitMinor / 100).toFixed(2),
+      utangBalancePesos: (sc.creditBalanceMinor / 100).toFixed(2),
+      joinedAt: sc.createdAt.toISOString(),
+    }));
+    const esc = (v: string | number | boolean) => {
+      const s = String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const header = ["name", "email", "phone", "approvalStatus", "loyaltyPoints", "creditApproved", "creditLimitPesos", "utangBalancePesos", "joinedAt"];
+    const csv = [header.join(","), ...rows.map((r) => header.map((h) => esc(r[h as keyof typeof r])).join(","))].join("\n");
+    res?.setHeader?.("Content-Type", "text/csv; charset=utf-8");
+    res?.setHeader?.("Content-Disposition", `attachment; filename="customers-${new Date().toISOString().slice(0, 10)}.csv"`);
+    return res?.send?.(csv) ?? csv;
+  }
+
+  /** GET /admin/customers/:id — full profile (orders, utang, loyalty). */
+  @Get("customers/:id")
+  async customerProfile(@Req() req: Request & { user?: AuthPrincipal }, @Param("id") id: string, @Headers("x-store-id") headerStoreId?: string) {
+    const user = req.user;
+    requireAdmin(user);
+    const storeId = await this.resolveStoreId(user, headerStoreId);
+    const profile = await this.loyalty.adminCustomerProfile(storeId, id);
+    if (!profile) throw new HttpException({ type: "not_found", message: "Customer not found" }, HttpStatus.NOT_FOUND);
+    return profile;
   }
 
   /** GET /admin/customers/:id/loyalty — ledger for one customer. */

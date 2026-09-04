@@ -116,12 +116,54 @@ export class LoyaltyService implements LoyaltyGateway {
     return { balance: sc.loyaltyBalancePoints, entries: entries.map((e) => ({ type: e.type, points: e.points, balanceAfter: e.balanceAfter, description: e.description, createdAt: e.createdAt })) };
   }
 
-  /** Admin: store customers with balances. */
-  async adminCustomers(storeId: string) {
+  /** Admin: store customers with balances. Filters: search (name/email/phone), approvalStatus, onlyUtang. */
+  async adminCustomers(storeId: string, f: { search?: string; approvalStatus?: string; onlyUtang?: boolean } = {}) {
+    const where: Record<string, unknown> = { storeId };
+    if (f.approvalStatus) where.approvalStatus = f.approvalStatus;
+    if (f.onlyUtang) where.creditBalanceMinor = { gt: 0 };
+    if (f.search) {
+      where.customer = {
+        OR: [
+          { name: { contains: f.search, mode: "insensitive" } },
+          { email: { contains: f.search, mode: "insensitive" } },
+          { phone: { contains: f.search, mode: "insensitive" } },
+        ],
+      };
+    }
     return prisma.storeCustomer.findMany({
-      where: { storeId },
+      where,
       orderBy: { createdAt: "desc" },
       include: { customer: { select: { id: true, email: true, name: true, phone: true } } },
     });
+  }
+
+  /** Admin: single customer profile with recent orders + credit entries + loyalty. */
+  async adminCustomerProfile(storeId: string, storeCustomerId: string) {
+    const sc = await prisma.storeCustomer.findFirst({
+      where: { storeId, id: storeCustomerId },
+      include: {
+        customer: { select: { id: true, email: true, name: true, phone: true } },
+        credit: { orderBy: { createdAt: "desc" }, take: 50 },
+      },
+    });
+    if (!sc) return null;
+    const orders = await prisma.order.findMany({
+      where: { storeId, storeCustomerId },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+      select: { id: true, orderNumber: true, status: true, totalMinor: true, source: true, createdAt: true, paymentStatus: true },
+    });
+    return {
+      id: sc.id,
+      customer: sc.customer,
+      approvalStatus: sc.approvalStatus,
+      loyaltyBalancePoints: sc.loyaltyBalancePoints,
+      creditApproved: sc.creditApproved,
+      creditLimitMinor: sc.creditLimitMinor,
+      creditBalanceMinor: sc.creditBalanceMinor,
+      createdAt: sc.createdAt,
+      orders,
+      creditEntries: sc.credit.map((e) => ({ id: e.id, type: e.type, amountMinor: e.amountMinor, note: e.note, orderId: e.orderId, createdAt: e.createdAt })),
+    };
   }
 }
