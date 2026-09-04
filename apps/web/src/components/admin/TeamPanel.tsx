@@ -12,7 +12,7 @@ interface Member {
   joinedAt: string;
 }
 
-const ROLES = ["MANAGER", "STAFF", "SALES_AGENT"];
+const ROLES = ["MANAGER", "STAFF", "SALES_AGENT", "DELIVERY"];
 
 export default function TeamPanel() {
   const [members, setMembers] = useState<Member[]>([]);
@@ -110,7 +110,7 @@ export default function TeamPanel() {
             </div>
           </div>
           <p className="text-muted small mt-2 mb-0">
-            Roles: <strong>MANAGER</strong> runs the store · <strong>STAFF</strong> fulfils orders · <strong>SALES_AGENT</strong> views orders and updates delivery status.
+            Roles: <strong>MANAGER</strong> runs the store · <strong>STAFF</strong> fulfils orders · <strong>SALES_AGENT</strong> views orders and updates delivery status · <strong>DELIVERY</strong> courier (delivery app only).
           </p>
         </div>
       </form>

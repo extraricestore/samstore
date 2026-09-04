@@ -11,7 +11,7 @@ import type { ApiError } from "@sam-store/contracts";
 export type TeamResult<T> = { ok: true; value: T } | { ok: false; error: ApiError };
 
 // Roles that can be invited to a store (OWNER is only assigned at store creation).
-export const INVITABLE_STORE_ROLES = ["MANAGER", "STAFF", "SALES_AGENT"] as const;
+export const INVITABLE_STORE_ROLES = ["MANAGER", "STAFF", "SALES_AGENT", "DELIVERY"] as const;
 
 export class TeamService {
   /** List active members of a store (with user + role). */
@@ -35,7 +35,7 @@ export class TeamService {
       return { ok: false, error: { type: "validation", errors: ["A valid email is required"] } };
     }
     if (!(INVITABLE_STORE_ROLES as readonly string[]).includes(role)) {
-      return { ok: false, error: { type: "validation", errors: ["Role must be MANAGER, STAFF, or SALES_AGENT"] } };
+      return { ok: false, error: { type: "validation", errors: ["Role must be MANAGER, STAFF, SALES_AGENT, or DELIVERY"] } };
     }
     const store = await prisma.store.findUnique({ where: { id: storeId } });
     if (!store) return { ok: false, error: { type: "not_found", message: "Store not found" } };
@@ -72,7 +72,7 @@ export class TeamService {
   /** Change a member's store role. */
   async changeRole(storeId: string, userId: string, role: string): Promise<TeamResult<{ userId: string; role: string }>> {
     if (!(INVITABLE_STORE_ROLES as readonly string[]).includes(role)) {
-      return { ok: false, error: { type: "validation", errors: ["Role must be MANAGER, STAFF, or SALES_AGENT"] } };
+      return { ok: false, error: { type: "validation", errors: ["Role must be MANAGER, STAFF, SALES_AGENT, or DELIVERY"] } };
     }
     const membership = await prisma.userStore.findUnique({ where: { userId_storeId: { userId, storeId } } });
     if (!membership) return { ok: false, error: { type: "not_found", message: "Member not part of this store" } };

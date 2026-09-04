@@ -61,6 +61,7 @@ enum StoreRole {
   MANAGER
   STAFF
   SALES_AGENT
+  DELIVERY // P12: courier — sees OUT_FOR_DELIVERY orders only; no admin surfaces
 }
 
 enum MembershipStatus {

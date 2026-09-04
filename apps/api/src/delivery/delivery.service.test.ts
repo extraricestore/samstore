@@ -1,0 +1,17 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { DeliveryService } from "./delivery.service.js";
+
+const svc = new DeliveryService();
+
+test("markStatus unknown order → not_found", async () => {
+  const r = await svc.markStatus("s1", "nope", "DELIVERED");
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.equal(r.error.type, "not_found");
+});
+
+test("markStatus wrong store → not_found (tenant scope)", async () => {
+  const r = await svc.markStatus("other", "some-order", "DELIVERED");
+  assert.equal(r.ok, false);
+  if (!r.ok) assert.equal(r.error.type, "not_found");
+});

@@ -4,8 +4,8 @@ import { TeamService, INVITABLE_STORE_ROLES } from "./team.service.js";
 
 const svc = new TeamService();
 
-test("invitable roles are manager/staff/sales-agent", () => {
-  assert.deepEqual([...INVITABLE_STORE_ROLES], ["MANAGER", "STAFF", "SALES_AGENT"]);
+test("invitable roles are manager/staff/sales-agent/delivery", () => {
+  assert.deepEqual([...INVITABLE_STORE_ROLES], ["MANAGER", "STAFF", "SALES_AGENT", "DELIVERY"]);
 });
 
 test("invite rejects invalid email", async () => {

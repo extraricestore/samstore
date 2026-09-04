@@ -28,7 +28,13 @@ export default function AdminLogin() {
       }
       // Store token for subsequent API calls (demo: sessionStorage).
       sessionStorage.setItem("samstore.admin.token", data.token);
-      router.push("/admin/dashboard");
+      // P12: DELIVERY role → courier app; everyone else → dashboard.
+      let role = "";
+      try {
+        const payload = JSON.parse(atob(data.token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+        role = payload.role ?? "";
+      } catch { /* token parse failed — fall through to dashboard */ }
+      router.push(role === "DELIVERY" ? "/admin/delivery" : "/admin/dashboard");
     } catch {
       setError("Network error");
     } finally {

@@ -32,6 +32,8 @@ import { InventoryService, INVENTORY_SERVICE } from "./inventory/inventory.servi
 import { InventoryController } from "./inventory/inventory.controller.js";
 import { ReportsService, REPORTS_SERVICE } from "./reports/reports.service.js";
 import { ReportsController } from "./reports/reports.controller.js";
+import { DeliveryService, DELIVERY_SERVICE } from "./delivery/delivery.service.js";
+import { DeliveryController } from "./delivery/delivery.controller.js";
 import { verifyToken } from "./auth/auth.domain.js";
 import {
   PrismaStoreRepository,
@@ -44,8 +46,12 @@ import {
 const CLAIM_SECRET = process.env.CLAIM_SIGNING_SECRET ?? "dev-only-in-memory-secret-0123456789";
 
 @Module({
-  controllers: [CheckoutController, PublicStoreController, CartController, AuthController, AdminController, OrderLookupController, CustomerAuthController, PosController, PaymentsController, CreditController, ExpensesController, PurchasesController, InventoryController, ReportsController],
+  controllers: [CheckoutController, PublicStoreController, CartController, AuthController, AdminController, OrderLookupController, CustomerAuthController, PosController, PaymentsController, CreditController, ExpensesController, PurchasesController, InventoryController, ReportsController, DeliveryController],
   providers: [
+    {
+      provide: DELIVERY_SERVICE,
+      useFactory: () => new DeliveryService(),
+    },
     {
       provide: REPORTS_SERVICE,
       useFactory: () => new ReportsService(),
