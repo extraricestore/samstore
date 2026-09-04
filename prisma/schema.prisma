@@ -151,6 +151,8 @@ model Store {
   stockTransfers StockTransfer[]
   payments       Payment[]
   creditEntries  CreditEntry[]
+  expenses       Expense[]
+  purchases      Purchase[]
 }
 
 model StoreSettings {
@@ -222,6 +224,7 @@ model Product {
   name        String
   description String?
   priceMinor  Int // integer minor units; NEVER float
+  costMinor   Int       @default(0) // latest purchase cost (P5) — feeds COGS/profit (P10)
   isActive    Boolean   @default(true)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -231,6 +234,7 @@ model Product {
   stockLevels   StockLevel[]    @relation("ProductStockLevels")
   cartItems     CartItem[]
   orderItems    OrderItem[]
+  purchaseItems PurchaseItem[]
   transfersFrom StockTransfer[]
   stockLevelId  String?
 
@@ -378,6 +382,52 @@ model Payment {
 
   @@index([storeId, receivedAt])
   @@index([orderId])
+}
+
+// ─────────────────────────────── Expenses ───────────────────────────────
+
+model Expense {
+  id          String   @id @default(cuid())
+  storeId     String
+  store       Store    @relation(fields: [storeId], references: [id])
+  category    String // rent | utilities | supplies | wages | transport | other
+  amountMinor Int
+  note        String?
+  spentAt     DateTime @default(now())
+  createdBy   String?
+  createdAt   DateTime @default(now())
+
+  @@index([storeId, spentAt])
+}
+
+// ─────────────────────────────── Purchases / replenishment ───────────────────────────────
+
+model Purchase {
+  id             String   @id @default(cuid())
+  storeId        String
+  store          Store    @relation(fields: [storeId], references: [id])
+  vendor         String?
+  note           String?
+  totalCostMinor Int      @default(0)
+  purchasedAt    DateTime @default(now())
+  createdBy      String?
+  createdAt      DateTime @default(now())
+
+  items PurchaseItem[]
+
+  @@index([storeId, purchasedAt])
+}
+
+model PurchaseItem {
+  id            String   @id @default(cuid())
+  purchaseId    String
+  purchase      Purchase @relation(fields: [purchaseId], references: [id])
+  storeId       String
+  productId     String
+  product       Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+  quantity      Int
+  costMinor     Int
+  lineCostMinor Int
 }
 
 // ─────────────────────────────── Loyalty ───────────────────────────────

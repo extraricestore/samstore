@@ -24,6 +24,10 @@ import { PaymentsService, PAYMENTS_SERVICE } from "./payments/payments.service.j
 import { PaymentsController } from "./payments/payments.controller.js";
 import { CreditService, CREDIT_SERVICE } from "./credit/credit.service.js";
 import { CreditController } from "./credit/credit.controller.js";
+import { ExpensesService, EXPENSES_SERVICE } from "./expenses/expenses.service.js";
+import { ExpensesController } from "./expenses/expenses.controller.js";
+import { PurchasesService, PURCHASES_SERVICE } from "./purchases/purchases.service.js";
+import { PurchasesController } from "./purchases/purchases.controller.js";
 import { verifyToken } from "./auth/auth.domain.js";
 import {
   PrismaStoreRepository,
@@ -36,8 +40,16 @@ import {
 const CLAIM_SECRET = process.env.CLAIM_SIGNING_SECRET ?? "dev-only-in-memory-secret-0123456789";
 
 @Module({
-  controllers: [CheckoutController, PublicStoreController, CartController, AuthController, AdminController, OrderLookupController, CustomerAuthController, PosController, PaymentsController, CreditController],
+  controllers: [CheckoutController, PublicStoreController, CartController, AuthController, AdminController, OrderLookupController, CustomerAuthController, PosController, PaymentsController, CreditController, ExpensesController, PurchasesController],
   providers: [
+    {
+      provide: EXPENSES_SERVICE,
+      useFactory: () => new ExpensesService(),
+    },
+    {
+      provide: PURCHASES_SERVICE,
+      useFactory: () => new PurchasesService(),
+    },
     {
       provide: CREDIT_SERVICE,
       useFactory: () => new CreditService(),

@@ -26,6 +26,7 @@ export class ProductAdminService {
       name: p.name,
       description: p.description,
       priceMinor: p.priceMinor,
+      costMinor: p.costMinor,
       isActive: p.isActive,
       category: p.category,
       quantityOnHand: onHand,
