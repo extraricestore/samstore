@@ -148,6 +148,35 @@ export interface PosSellRequest {
   customerName?: string;
   items: PosSellItem[];
   paymentMethod: "cash" | "credit";
+  /** V1: cash tendered (minor) — records a Payment row with change = tendered − total */
+  tenderedMinor?: number;
+  /** V1: utang start/due dates (ISO). Defaults: now / start + store creditTermDays */
+  startAt?: string;
+  dueAt?: string;
+}
+
+export interface PosHoldRequest {
+  customerId?: string;
+  customerName?: string;
+  customerPhone?: string;
+  items: PosSellItem[];
+}
+
+export interface PosHoldItemsRequest {
+  /** full replacement line set (totals + stock recomputed server-side) */
+  items: PosSellItem[];
+}
+
+export interface PosHoldCompleteRequest {
+  /** optional line replacement before completing (resume-edit flow) */
+  items?: PosSellItem[];
+  paymentMethod: "cash" | "credit";
+  tenderedMinor?: number;
+  customerId?: string;
+  customerName?: string;
+  customerPhone?: string;
+  startAt?: string;
+  dueAt?: string;
 }
 
 export interface PosSellResponse {
@@ -157,6 +186,8 @@ export interface PosSellResponse {
   totalMinor: number;
   currencyCode: string;
   paymentMethod: "cash" | "credit";
+  /** V1: change owed (cash) */
+  changeMinor?: number;
 }
 
 export interface OrderViewDTO {
@@ -204,6 +235,8 @@ export const ORDER_STATUSES = [
   "READY",
   "OUT_FOR_DELIVERY",
   "DELIVERED",
+  "ON_HOLD",
+  "COMPLETED",
   "CANCELLED",
   "FAILED_DELIVERY",
 ] as const;

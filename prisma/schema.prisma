@@ -41,6 +41,7 @@ enum OrderStatus {
   READY
   OUT_FOR_DELIVERY
   DELIVERED
+  ON_HOLD // POS held order (V1) — goods earmarked, resume/edit/complete later
   COMPLETED // counter/POS sale — terminal, payment captured at completion
   CANCELLED
   FAILED_DELIVERY
@@ -173,6 +174,7 @@ model StoreSettings {
   pickupEnabled            Boolean  @default(false)
   deliveryFeeMinor         Int      @default(0)
   creditLimitMinor         Int      @default(0) // store-wide utang limit (0 = credit disabled)
+  creditTermDays           Int      @default(30) // V1: default dueAt offset for credit purchases
   receiptHeader            String? // P11: printed at top of receipts
   receiptFooter            String? // P11: printed at bottom
   showVatLabel             Boolean  @default(true) // P11: display-only VAT note (decision #2)
@@ -630,6 +632,8 @@ model CreditEntry {
   order           Order?        @relation(fields: [orderId], references: [id])
   type            String // purchase | payment
   amountMinor     Int // signed: +purchase (debt), -payment (settle)
+  startAt         DateTime      @default(now()) // V1: purchase date
+  dueAt           DateTime? // V1: startAt + store creditTermDays (or manual)
   note            String?
   createdBy       String?
   createdAt       DateTime      @default(now())

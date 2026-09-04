@@ -34,8 +34,22 @@ export class CreditService {
     return settings?.creditLimitMinor ?? 0;
   }
 
+  /** V1: store credit term (days) for default due dates. */
+  async effectiveTermDays(storeId: string): Promise<number> {
+    const settings = await prisma.storeSettings.findUnique({ where: { storeId } });
+    return settings?.creditTermDays ?? 30;
+  }
+
+  /** V1: default dueAt from term (or an explicit dueAt). */
+  private async defaultDueAt(storeId: string, startAt: Date | undefined, dueAt: string | undefined): Promise<{ start: Date; due: Date | null }> {
+    const start = startAt ?? new Date();
+    if (dueAt) return { start, due: new Date(dueAt) };
+    const term = await this.effectiveTermDays(storeId);
+    return { start, due: new Date(start.getTime() + term * 86_400_000) };
+  }
+
   /** Record a credit purchase (debt) against a customer. Call inside the order transaction. */
-  async sellOnCredit(tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0], storeId: string, storeCustomerId: string, orderId: string, amountMinor: number, actorId: string): Promise<CreditResult<{ balanceMinor: number }>> {
+  async sellOnCredit(tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0], storeId: string, storeCustomerId: string, orderId: string, amountMinor: number, actorId: string, opts: { startAt?: string; dueAt?: string } = {}): Promise<CreditResult<{ balanceMinor: number }>> {
     const sc = await tx.storeCustomer.findFirst({ where: { storeId, id: storeCustomerId } });
     if (!sc) return { ok: false, error: { type: "not_found", message: "Customer not found in this store" } };
     if (!sc.creditApproved) return { ok: false, error: { type: "conflict", message: "Customer is not approved for credit" } };
@@ -44,8 +58,9 @@ export class CreditService {
     if (sc.creditBalanceMinor + amountMinor > limit) {
       return { ok: false, error: { type: "conflict", message: `Credit limit exceeded (limit ₱${(limit / 100).toFixed(2)})` } };
     }
+    const { start, due } = await this.defaultDueAt(storeId, opts.startAt ? new Date(opts.startAt) : undefined, opts.dueAt);
     await tx.creditEntry.create({
-      data: { storeId, storeCustomerId, orderId, type: "purchase", amountMinor, note: "POS credit sale", createdBy: actorId },
+      data: { storeId, storeCustomerId, orderId, type: "purchase", amountMinor, startAt: start, dueAt: due, note: "POS credit sale", createdBy: actorId },
     });
     const updated = await tx.storeCustomer.update({
       where: { id: sc.id },
@@ -68,10 +83,11 @@ export class CreditService {
   }
 
   /** Record an online credit purchase (after order creation). */
-  async recordPurchase(orderId: string, storeId: string, storeCustomerId: string, amountMinor: number): Promise<void> {
+  async recordPurchase(orderId: string, storeId: string, storeCustomerId: string, amountMinor: number, startAt?: string, dueAt?: string): Promise<void> {
+    const { start, due } = await this.defaultDueAt(storeId, startAt ? new Date(startAt) : undefined, dueAt);
     await prisma.$transaction(async (tx) => {
       await tx.creditEntry.create({
-        data: { storeId, storeCustomerId, orderId, type: "purchase", amountMinor, note: "Online credit checkout", createdBy: null },
+        data: { storeId, storeCustomerId, orderId, type: "purchase", amountMinor, startAt: start, dueAt: due, note: "Online credit checkout", createdBy: null },
       });
       await tx.storeCustomer.update({
         where: { id: storeCustomerId },
@@ -106,21 +122,39 @@ export class CreditService {
     return { ok: true, value: payment };
   }
 
-  /** Customers with outstanding balances (Utang list). */
-  async utangList(storeId: string) {
+  /** Customers with outstanding balances (Utang list). V1: status = unpaid | paid. */
+  async utangList(storeId: string, status: "unpaid" | "paid" = "unpaid") {
+    const where: Record<string, unknown> = { storeId, credit: { some: {} } };
+    if (status === "unpaid") where.creditBalanceMinor = { gt: 0 };
+    else where.creditBalanceMinor = { equals: 0 };
     const rows = await prisma.storeCustomer.findMany({
-      where: { storeId, creditBalanceMinor: { gt: 0 } },
-      orderBy: { creditBalanceMinor: "desc" },
-      include: { customer: { select: { name: true, phone: true } } },
+      where,
+      orderBy: status === "unpaid" ? { creditBalanceMinor: "desc" } : { updatedAt: "desc" },
+      include: {
+        customer: { select: { name: true, phone: true } },
+        credit: { orderBy: { createdAt: "asc" }, select: { type: true, createdAt: true, startAt: true, dueAt: true } },
+      },
     });
-    return rows.map((r) => ({
-      id: r.id,
-      customerName: r.customer.name,
-      phone: r.customer.phone,
-      balanceMinor: r.creditBalanceMinor,
-      creditLimitMinor: r.creditLimitMinor,
-      creditApproved: r.creditApproved,
-    }));
+    return rows.map((r) => {
+      const purchases = r.credit.filter((e) => e.type === "purchase");
+      const payments = r.credit.filter((e) => e.type === "payment");
+      const oldestDue = purchases.reduce<Date | null>((m, e) => (e.dueAt && (!m || e.dueAt < m) ? e.dueAt : m), null);
+      const firstPurchaseAt = purchases[0]?.startAt ?? null;
+      const paidAt = payments.length > 0 ? payments[payments.length - 1]!.createdAt : null;
+      const daysOverdue = oldestDue && oldestDue.getTime() < Date.now() ? Math.floor((Date.now() - oldestDue.getTime()) / 86_400_000) : 0;
+      return {
+        id: r.id,
+        customerName: r.customer.name,
+        phone: r.customer.phone,
+        balanceMinor: r.creditBalanceMinor,
+        creditLimitMinor: r.creditLimitMinor,
+        creditApproved: r.creditApproved,
+        firstPurchaseAt,
+        oldestDueAt: oldestDue,
+        daysOverdue,
+        paidAt,
+      };
+    });
   }
 
   /** Full ledger for one customer. */
@@ -140,7 +174,7 @@ export class CreditService {
       creditApproved: sc.creditApproved,
       creditLimitMinor: sc.creditLimitMinor,
       balanceMinor: sc.creditBalanceMinor,
-      entries: sc.credit.map((e) => ({ id: e.id, type: e.type, amountMinor: e.amountMinor, note: e.note, orderId: e.orderId, createdAt: e.createdAt })),
+      entries: sc.credit.map((e) => ({ id: e.id, type: e.type, amountMinor: e.amountMinor, startAt: e.startAt, dueAt: e.dueAt, note: e.note, orderId: e.orderId, createdAt: e.createdAt })),
     };
   }
 }

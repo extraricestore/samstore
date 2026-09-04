@@ -16,6 +16,7 @@ export interface StoreSettingsInput {
   orderCutoff?: string | null;
   maxOpenOrdersPerCustomer?: number;
   creditLimitMinor?: number; // P11: default utang limit
+  creditTermDays?: number; // V1: default dueAt offset
   receiptHeader?: string | null; // P11
   receiptFooter?: string | null; // P11
   showVatLabel?: boolean; // P11
@@ -52,6 +53,7 @@ export class StoreSettingsService {
         orderCutoff: store.settings?.orderCutoff ?? null,
         maxOpenOrdersPerCustomer: store.settings?.maxOpenOrdersPerCustomer ?? 10,
         creditLimitMinor: store.settings?.creditLimitMinor ?? 0,
+        creditTermDays: store.settings?.creditTermDays ?? 30,
         receiptHeader: store.settings?.receiptHeader ?? null,
         receiptFooter: store.settings?.receiptFooter ?? null,
         showVatLabel: store.settings?.showVatLabel ?? true,
@@ -87,6 +89,7 @@ export class StoreSettingsService {
         ...(input.orderCutoff !== undefined ? { orderCutoff: input.orderCutoff } : {}),
         ...(input.maxOpenOrdersPerCustomer !== undefined ? { maxOpenOrdersPerCustomer: input.maxOpenOrdersPerCustomer } : {}),
         ...(input.creditLimitMinor !== undefined ? { creditLimitMinor: input.creditLimitMinor } : {}),
+        ...(input.creditTermDays !== undefined ? { creditTermDays: input.creditTermDays } : {}),
         ...(input.receiptHeader !== undefined ? { receiptHeader: input.receiptHeader } : {}),
         ...(input.receiptFooter !== undefined ? { receiptFooter: input.receiptFooter } : {}),
         ...(input.showVatLabel !== undefined ? { showVatLabel: input.showVatLabel } : {}),
@@ -103,6 +106,7 @@ export class StoreSettingsService {
         orderCutoff: input.orderCutoff ?? null,
         maxOpenOrdersPerCustomer: input.maxOpenOrdersPerCustomer ?? 10,
         creditLimitMinor: input.creditLimitMinor ?? 0,
+        creditTermDays: input.creditTermDays ?? 30,
         receiptHeader: input.receiptHeader ?? null,
         receiptFooter: input.receiptFooter ?? null,
         showVatLabel: input.showVatLabel ?? true,

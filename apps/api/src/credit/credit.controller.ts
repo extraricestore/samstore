@@ -1,5 +1,5 @@
 import {
-  Body, Controller, Get, Headers, HttpException, HttpStatus, Inject, Param, Patch, Post, Req, UseGuards,
+  Body, Controller, Get, Headers, HttpException, HttpStatus, Inject, Param, Patch, Post, Query, Req, UseGuards,
 } from "@nestjs/common";
 import type { ApiError } from "@sam-store/contracts";
 import { JwtAuthGuard, type AuthPrincipal } from "../auth/auth.guard.js";
@@ -57,13 +57,14 @@ export class CreditController {
     return result.value;
   }
 
-  /** GET /admin/credit/utang — customers with outstanding balances. */
+  /** GET /admin/credit/utang?status=unpaid|paid — customers with credit history. */
   @Get("credit/utang")
-  async utangList(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
+  async utangList(@Req() req: Request & { user?: AuthPrincipal }, @Query("status") status?: string, @Headers("x-store-id") headerStoreId?: string) {
     const user = req.user;
     if (!user || !ADMIN_ROLES.includes(user.role)) throw new HttpException({ type: "forbidden", message: "Not authorized" }, HttpStatus.FORBIDDEN);
     const storeId = await this.resolveStore(user, headerStoreId);
-    return { customers: await this.creditSvc.utangList(storeId) };
+    const s = status === "paid" ? "paid" : "unpaid";
+    return { customers: await this.creditSvc.utangList(storeId, s), storeId };
   }
 
   /** GET /admin/credit/:storeCustomerId — ledger for one customer. */

@@ -8,6 +8,7 @@ export const ORDER_STATES = [
   "READY",
   "OUT_FOR_DELIVERY",
   "DELIVERED",
+  "ON_HOLD",
   "COMPLETED",
   "CANCELLED",
   "FAILED_DELIVERY",
@@ -17,12 +18,13 @@ export type OrderState = (typeof ORDER_STATES)[number];
 
 // Allowed transitions (forward only; no skipping payment/delivery invariants).
 export const ALLOWED_TRANSITIONS: Record<OrderState, OrderState[]> = {
-  RECEIVED: ["CONFIRMED", "COMPLETED", "CANCELLED"],
+  RECEIVED: ["CONFIRMED", "COMPLETED", "CANCELLED", "ON_HOLD"],
   CONFIRMED: ["PREPARING", "CANCELLED"],
   PREPARING: ["READY", "CANCELLED"],
   READY: ["OUT_FOR_DELIVERY", "CANCELLED"],
   OUT_FOR_DELIVERY: ["DELIVERED", "FAILED_DELIVERY"],
   DELIVERED: [],
+  ON_HOLD: ["COMPLETED", "CANCELLED"], // POS held — complete or void
   COMPLETED: [], // terminal POS/counter state
   CANCELLED: [],
   FAILED_DELIVERY: ["OUT_FOR_DELIVERY"], // retry delivery

@@ -166,16 +166,36 @@ export class AdminController {
     return result.value;
   }
 
-  /** GET /admin/orders — list recent orders (tenant-scoped). */
+  /** GET /admin/orders — list orders (tenant-scoped). Filters (V1): status, from, to, customer. */
   @Get("orders")
-  async orders(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
+  async orders(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Query("status") status?: string,
+    @Query("from") from?: string,
+    @Query("to") to?: string,
+    @Query("customer") customer?: string,
+    @Headers("x-store-id") headerStoreId?: string,
+  ) {
     const user = req.user;
     requireView(user);
     const storeId = await this.resolveStoreId(user, headerStoreId);
+    const where: Record<string, unknown> = { storeId };
+    if (status) where.status = status.split(",");
+    if (from || to) {
+      where.createdAt = {};
+      if (from) (where.createdAt as Record<string, unknown>).gte = new Date(from);
+      if (to) (where.createdAt as Record<string, unknown>).lte = new Date(to);
+    }
+    if (customer) {
+      where.OR = [
+        { customerName: { contains: customer, mode: "insensitive" } },
+        { customerPhone: { contains: customer, mode: "insensitive" } },
+      ];
+    }
     const list = await prisma.order.findMany({
-      where: { storeId },
+      where,
       orderBy: { createdAt: "desc" },
-      take: 100,
+      take: 200,
       select: {
         id: true, orderNumber: true, status: true, totalMinor: true, currencyCode: true,
         customerName: true, customerPhone: true, createdAt: true, paymentStatus: true, source: true,
