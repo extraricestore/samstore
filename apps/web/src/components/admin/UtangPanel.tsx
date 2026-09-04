@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { API_URL } from "../../config";
 import { adminHeaders } from "../../lib/admin";
+import { toast } from "../../lib/toast";
 
 interface UtangCustomer {
   id: string;
@@ -83,6 +84,7 @@ export default function UtangPanel() {
       setPayTarget(null);
       setPayInput("");
       setPayNote("");
+      toast("Utang payment recorded");
       await load();
     } else {
       const d = await res.json();

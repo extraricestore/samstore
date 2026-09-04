@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { API_URL } from "../../config";
 import { adminHeaders, type AdminOrder, getAdminRole, roleCan } from "../../lib/admin";
 import ReceiptModal from "./ReceiptModal";
+import { toast } from "../../lib/toast";
 
 const ALLOWED: Record<string, string[]> = {
   RECEIVED: ["CONFIRMED", "CANCELLED"],
@@ -32,8 +33,9 @@ const STATUS_BADGE: Record<string, string> = {
 export default function OrdersPanel() {
   const role = getAdminRole();
   const canVoidRefund = roleCan(role, "voidRefund");
-  const canWrite = roleCan(role, "write");
-  const [orders, setOrders] = useState<AdminOrder[]>([]);
+    const canWrite = roleCan(role, "write");
+    const [orderDetail, setOrderDetail] = useState<AdminOrder | null>(null);
+    const [orders, setOrders] = useState<AdminOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [transitioning, setTransitioning] = useState<string | null>(null);
@@ -78,10 +80,11 @@ export default function OrdersPanel() {
         body: JSON.stringify({ reason: reasonText }),
       });
       const data = await res.json();
-      if (!res.ok) { setError(data?.message ?? `${kind} failed`); return; }
-      setConfirmAction(null);
-      setReason("");
-      await load();
+            if (!res.ok) { setError(data?.message ?? `${kind} failed`); return; }
+            setConfirmAction(null);
+            setReason("");
+            toast(`${kind === "void" ? "Voided" : "Refunded"} → CANCELLED`);
+            void load();
     } catch (e) {
       setError(e instanceof Error ? e.message : `${kind} failed`);
     } finally {
@@ -104,8 +107,9 @@ export default function OrdersPanel() {
         return;
       }
       setPendingReason(null);
-      setReason("");
-      await load();
+            setReason("");
+            toast(`Order → ${toStatus}`);
+            void load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Transition failed");
     } finally {
@@ -124,10 +128,11 @@ export default function OrdersPanel() {
       ) : orders.length === 0 ? (
         <p className="text-muted">No orders yet.</p>
       ) : (
-        <table className="table table-hover align-middle">
-          <thead>
-            <tr>
-              <th>Order</th>
+        <div className="table-responsive">
+                  <table className="table table-hover align-middle">
+                    <thead>
+                    <tr>
+                      <th>Order</th>
               <th>Customer</th>
               <th>Phone</th>
               <th className="text-end">Total</th>
@@ -169,27 +174,31 @@ export default function OrdersPanel() {
                   </td>
                   <td className="text-muted small">{new Date(o.createdAt).toLocaleString()}</td>
                   <td className="text-end">
-                    {canWrite && (
+                                      {canWrite && (
                                         <button className="btn btn-sm btn-outline-secondary me-1" title="Receipt" onClick={() => setReceiptOrder(o.id)}>
                                           <i className="bi bi-receipt"></i>
                                         </button>
                                       )}
                                       {canVoidRefund && o.status === "COMPLETED" && (
-                      <button
-                        className="btn btn-sm btn-outline-danger"
-                        title="Void/Refund"
-                        onClick={() => setConfirmAction({ orderId: o.id, kind: o.paymentStatus === "COLLECTED" ? "refund" : "void" })}
-                      >
-                        <i className="bi bi-x-circle"></i>
-                      </button>
-                    )}
-                  </td>
-                </tr>
+                                        <button
+                                          className="btn btn-sm btn-outline-danger me-1"
+                                          title="Void/Refund"
+                                          onClick={() => setConfirmAction({ orderId: o.id, kind: o.paymentStatus === "COLLECTED" ? "refund" : "void" })}
+                                        >
+                                          <i className="bi bi-x-circle"></i>
+                                        </button>
+                                      )}
+                                      <button className="btn btn-sm btn-outline-secondary" onClick={() => setOrderDetail(o)} title="Details">
+                                        <i className="bi bi-view-list"></i>
+                                      </button>
+                                    </td>
+                                  </tr>
               );
             })}
           </tbody>
         </table>
-      )}
+                </div>
+              )}
 
       {/* Reason modal for cancellations / failed delivery */}
       {pendingReason && (
@@ -269,6 +278,34 @@ export default function OrdersPanel() {
       )}
 
       {receiptOrder && <ReceiptModal orderId={receiptOrder} onClose={() => setReceiptOrder(null)} />}
-    </div>
-  );
-}
+            {orderDetail && (
+              <>
+                <div className="modal fade show d-block" tabIndex={-1}>
+                  <div className="modal-dialog modal-dialog-centered">
+                    <div className="modal-content">
+                      <div className="modal-header">
+                        <h5 className="modal-title">{orderDetail.orderNumber}</h5>
+                        <button type="button" className="btn-close" onClick={() => setOrderDetail(null)}></button>
+                      </div>
+                      <div className="modal-body small">
+                        <dl className="row mb-2">
+                          <dt className="col-5">Customer</dt><dd className="col-7">{orderDetail.customerName}</dd>
+                          <dt className="col-5">Phone</dt><dd className="col-7">{orderDetail.customerPhone || "—"}</dd>
+                          <dt className="col-5">Status</dt><dd className="col-7"><span className="badge text-bg-secondary">{orderDetail.status}</span></dd>
+                          <dt className="col-5">Total</dt><dd className="col-7 fw-semibold">{toPesos(orderDetail.totalMinor)}</dd>
+                          {orderDetail.paymentStatus && <><dt className="col-5">Payment</dt><dd className="col-7">{orderDetail.paymentStatus}</dd></>}
+                          {orderDetail.source && <><dt className="col-5">Source</dt><dd className="col-7">{orderDetail.source}</dd></>}
+                        </dl>
+                      </div>
+                      <div className="modal-footer">
+                        <button className="btn btn-outline-secondary btn-sm" onClick={() => setOrderDetail(null)}>Close</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div className="modal-backdrop fade show"></div>
+              </>
+            )}
+          </div>
+        );
+      }

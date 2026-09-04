@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { API_URL } from "../../config";
 import { getAdminToken, adminHeaders } from "../../lib/admin";
+import { toast } from "../../lib/toast";
 
 interface StoreSettings {
   id: string;
@@ -115,7 +116,8 @@ export default function SettingsPanel() {
         return;
       }
       setSaved(true);
-      await load();
+            toast("Settings saved");
+            await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Save failed");
     } finally {

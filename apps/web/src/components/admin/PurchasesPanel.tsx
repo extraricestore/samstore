@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { API_URL } from "../../config";
 import { adminHeaders } from "../../lib/admin";
+import { toast } from "../../lib/toast";
 
 interface ProductOption { id: string; name: string; sku: string; availableQuantity: number }
 interface ReplenishItem { id: string; name: string; sku: string; availableQuantity: number; reorderThreshold: number }
@@ -76,6 +77,7 @@ export default function PurchasesPanel() {
       setVendor("");
       setNote("");
       setLines([]);
+      toast("Purchase completed — stock added");
       await load();
     } else {
       const d = await res.json();

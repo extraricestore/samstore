@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { API_URL } from "../../config";
 import { adminHeaders } from "../../lib/admin";
+import { toast } from "../../lib/toast";
 
 interface PosProduct {
   id: string;
@@ -91,6 +92,7 @@ export default function PosPanel() {
         return;
       }
       setSuccess(`${data.paymentMethod === "credit" ? "Credit sale" : "Sale"} completed — ${data.orderNumber} · ${toPesos(data.totalMinor)} (cash changes ${payment === "cash" ? "OK" : "n/a"})`);
+      toast(`${data.paymentMethod === "credit" ? "Credit sale" : "Sale"} ${data.orderNumber} completed · ${toPesos(data.totalMinor)}`);
       setCart([]);
       setCustomerId(""); setCustomerName("");
       await load(); // refresh stock

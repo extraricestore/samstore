@@ -52,6 +52,30 @@ export default function AdminLogin() {
             <p className="text-muted small">Sign in to manage your store</p>
           </div>
           {error && <div className="alert alert-danger py-2 small">{error}</div>}
+
+          <div className="alert alert-light border small mb-3">
+            <div className="fw-semibold small mb-1"><i className="bi bi-info-circle me-1"></i>Demo accounts — tap to fill</div>
+            <div className="d-flex flex-wrap gap-1">
+              {(  [
+                ["Owner", "admin@samstore.test", "admin-pass-123"],
+                ["Manager", "manager@samstore.test", "manager-pass-123"],
+                ["Staff", "staff@samstore.test", "staff-pass-123"],
+                ["Agent", "agent@samstore.test", "agent-pass-123"],
+                ["Delivery", "delivery@samstore.test", "delivery-pass-123"],
+              ] as [string, string, string][]).map(([label, em, pw]) => (
+                <button
+                  key={em}
+                  type="button"
+                  className="btn btn-sm btn-outline-secondary"
+                  onClick={() => { setEmail(em); setPassword(pw); }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="text-muted small mt-1">Passwords shown for local demo only.</div>
+          </div>
+
           <form onSubmit={login}>
             <div className="mb-3">
               <label className="form-label small">Email</label>

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { API_URL } from "../../config";
 import { adminHeaders } from "../../lib/admin";
+import { toast } from "../../lib/toast";
 
 interface ExpenseRow {
   id: string;
@@ -53,6 +54,7 @@ export default function ExpensesPanel() {
       setShowForm(false);
       setAmount("");
       setNote("");
+      toast("Expense saved");
       await load();
     } else {
       const d = await res.json();
@@ -61,8 +63,9 @@ export default function ExpensesPanel() {
   };
 
   const remove = async (id: string) => {
+    if (!window.confirm("Delete this expense?")) return;
     const res = await fetch(`${API_URL}/admin/expenses/${id}`, { method: "DELETE", headers: adminHeaders() });
-    if (res.ok) await load();
+    if (res.ok) { toast("Expense deleted"); await load(); }
   };
 
   return (
