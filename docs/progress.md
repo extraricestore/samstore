@@ -12,7 +12,14 @@ Updated: 2026-09-04 · Peddlr upgrade P1–P12 **all complete** · Active model:
 | U5 | 3-step checkout (Contact/Review/Pay), Delivery/Pickup toggle (Order.deliveryType; pickup = no fee/no address), Pay-on-credit for approved, Tracking-card success (auto-load + copy/share) | ✅ (`a94cf02`, E2E: pickup 12000/pickup, credit→utang 17000) |
 | U6 | Customer account dashboard: GET /auth/customer/me (loyalty/credit/orders), My orders + track, saved-contact prefill; FIX: courier DELIVERED now awards loyalty (+170 pts verified) | ✅ (`54ddc3e`) |
 | U7 | Courier app: logout, tel:/maps deep links, items summary, schedule sorting, Recent section (GET /delivery/recent) | ✅ (`44dc144`) |
-| U8 | Consistency: toasts (POS/orders/expenses/purchases/settings/utang), confirm-before-delete, table-responsive, order-detail modal, demo-login quick-fill panel | ✅ (this commit) |
+| U8 | Consistency: toasts (POS/orders/expenses/purchases/settings/utang), confirm-before-delete, table-responsive, order-detail modal, demo-login quick-fill panel | ✅ (`c2e2483`) |
+
+## Orders workflow — Modules W1–W3 (all ✅, 150 tests)
+| # | Module | Status |
+|---|--------|--------|
+| W1 | Backend: PATCH /admin/orders/:id/items (stock-delta edit RECEIVED/CONFIRMED/ON_HOLD), POST send-for-delivery (one-tap → OUT_FOR_DELIVERY, delivery only), POST complete-now (pickup → COMPLETED; delivery 409) | ✅ (`d66d56e`, E2E) |
+| W2 | Orders tabs: Pending=RECEIVED · On Process=CONFIRMED/PREPARING/READY/ON_HOLD · **For Delivery**=OUT_FOR_DELIVERY · Completed · Void; per-row delivery/pickup analysis + routing actions; Edit for pending | ✅ (`6cf2ab3`) |
+| W3 | Full workflow E2E: pending→confirm→on process→for delivery, pickup→complete-now, stock-delta edit (all live) | ✅ (this commit) |
 
 ## Peddlr upgrade — Modules P1–P12 (all ✅, 148 tests)
 
