@@ -39,8 +39,9 @@ const STATUS_BADGE: Record<string, string> = {
 
 const TABS: { id: string; label: string; status?: string[] }[] = [
   { id: "today", label: "Today", status: undefined },
-  { id: "pending", label: "Pending", status: ["RECEIVED", "CONFIRMED"] },
-  { id: "onprocess", label: "On Process", status: ["PREPARING", "READY", "OUT_FOR_DELIVERY", "ON_HOLD"] },
+  { id: "pending", label: "Pending", status: ["RECEIVED"] },
+  { id: "onprocess", label: "On Process", status: ["CONFIRMED", "PREPARING", "READY", "ON_HOLD"] },
+  { id: "fordelivery", label: "For Delivery", status: ["OUT_FOR_DELIVERY"] },
   { id: "completed", label: "Completed", status: ["DELIVERED", "COMPLETED"] },
   { id: "void", label: "Void", status: ["CANCELLED", "FAILED_DELIVERY"] },
 ];
@@ -70,7 +71,7 @@ export default function OrdersPanel() {
   const [confirmAction, setConfirmAction] = useState<{ orderId: string; kind: "void" | "refund" | "voidHold" } | null>(null);
   const [orderDetail, setOrderDetail] = useState<AdminOrder | null>(null);
   // On-process editing
-  const [editHold, setEditHold] = useState<{ id: string; orderNumber: string; lines: EditLine[] } | null>(null);
+  const [editHold, setEditHold] = useState<{ id: string; orderNumber: string; status: string; lines: EditLine[] } | null>(null);
   const [products, setProducts] = useState<ProductOption[]>([]);
   const [payHold, setPayHold] = useState<{ id: string; orderNumber: string; totalMinor: number } | null>(null);
   const [payMethod, setPayMethod] = useState<"cash" | "credit">("cash");
@@ -142,23 +143,68 @@ export default function OrdersPanel() {
   };
 
   const doVoidRefund = async (orderId: string, kind: "void" | "refund" | "voidHold", reasonText?: string) => {
-    setTransitioning(orderId);
-    setError(null);
-    try {
-      const url = kind === "voidHold" ? `${API_URL}/admin/pos/holds/${orderId}/void` : `${API_URL}/admin/orders/${orderId}/${kind}`;
-      const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...adminHeaders() }, body: JSON.stringify({ reason: reasonText }) });
-      const data = await res.json();
-      if (!res.ok) { setError(data?.message ?? `${kind} failed`); return; }
-      setConfirmAction(null);
-      setReason("");
-      toast(kind === "voidHold" ? "Held order voided — stock restored" : `${kind === "void" ? "Voided" : "Refunded"} → CANCELLED`);
-      void load();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : `${kind} failed`);
-    } finally { setTransitioning(null); }
-  };
+      setTransitioning(orderId);
+      setError(null);
+      try {
+        const url = kind === "voidHold" ? `${API_URL}/admin/pos/holds/${orderId}/void` : `${API_URL}/admin/orders/${orderId}/${kind}`;
+        const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...adminHeaders() }, body: JSON.stringify({ reason: reasonText }) });
+        const data = await res.json();
+        if (!res.ok) { setError(data?.message ?? `${kind} failed`); return; }
+        setConfirmAction(null);
+        setReason("");
+        toast(kind === "voidHold" ? "Held order voided — stock restored" : `${kind === "void" ? "Voided" : "Refunded"} → CANCELLED`);
+        void load();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : `${kind} failed`);
+      } finally { setTransitioning(null); }
+    };
 
-  // ── On-process: edit held items ──
+      // ── W1/W2: routing + order edit ──
+      const sendForDelivery = async (orderId: string) => {
+        setTransitioning(orderId);
+        setError(null);
+        try {
+          const res = await fetch(`${API_URL}/admin/orders/${orderId}/send-for-delivery`, { method: "POST", headers: { "Content-Type": "application/json", ...adminHeaders() } });
+          const data = await res.json();
+          if (!res.ok) { setError(data?.message ?? "Failed"); return; }
+          toast(`${data.orderNumber ?? "Order"} → OUT_FOR_DELIVERY`);
+          void load();
+        } catch (e) {
+          setError(e instanceof Error ? e.message : "Failed");
+        } finally { setTransitioning(null); }
+      };
+
+      const completeNow = async (orderId: string) => {
+        setTransitioning(orderId);
+        setError(null);
+        try {
+          const res = await fetch(`${API_URL}/admin/orders/${orderId}/complete-now`, { method: "POST", headers: { "Content-Type": "application/json", ...adminHeaders() } });
+          const data = await res.json();
+          if (!res.ok) { setError(data?.message ?? "Failed"); return; }
+          toast("Order completed — payment collected");
+          void load();
+        } catch (e) {
+          setError(e instanceof Error ? e.message : "Failed");
+        } finally { setTransitioning(null); }
+      };
+
+      /** Save order item edits (RECEIVED/CONFIRMED/ON_HOLD) via W1 stock-delta endpoint. */
+      const saveOrderEdit = async () => {
+        if (!editHold) return;
+        setError(null);
+        const res = await fetch(`${API_URL}/admin/orders/${editHold.id}/items`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", ...adminHeaders() },
+          body: JSON.stringify({ items: editHold.lines.map((l) => ({ productId: l.productId, quantity: l.quantity })) }),
+        });
+        const d = await res.json();
+        if (!res.ok) { setError(d?.message ?? "Edit failed"); return; }
+        setEditHold(null);
+        toast(`Order updated · ${toPesos(d.totalMinor)} (stock adjusted)`);
+        void load();
+      };
+
+      // ── On-process: edit held items ──
   const saveHoldEdit = async () => {
     if (!editHold) return;
     setError(null);
@@ -218,45 +264,72 @@ export default function OrdersPanel() {
   const summaryOf = (o: AdminOrder) => `${o.orderNumber} · ${toPesos(o.totalMinor)} · ${o.customerName}`;
 
   const rowActions = (o: AdminOrder) => {
-    const next = ALLOWED[o.status] ?? [];
-    return (
-      <div className="d-flex flex-wrap gap-1 align-items-center">
-        {looking(o)}
-        {o.status === "ON_HOLD" && canWrite && (
-          <>
-            <button className="btn btn-sm btn-outline-warning" onClick={() => openEdit(o)}><i className="bi bi-pencil me-1"></i>Edit</button>
-            <button className="btn btn-sm btn-success" onClick={() => { setPayHold({ id: o.id, orderNumber: o.orderNumber, totalMinor: o.totalMinor }); setPayMethod("cash"); setTendered(""); }}><i className="bi bi-cash me-1"></i>Pay</button>
-            <button className="btn btn-sm btn-outline-success" onClick={() => { setPayHold({ id: o.id, orderNumber: o.orderNumber, totalMinor: o.totalMinor }); setPayMethod("credit"); }}><i className="bi bi-journal me-1"></i>Utang</button>
-            {canVoidRefund && <button className="btn btn-sm btn-outline-danger" onClick={() => setConfirmAction({ orderId: o.id, kind: "voidHold" })}><i className="bi bi-pause-btn me-1"></i>Void</button>}
-          </>
-        )}
-        {o.status !== "ON_HOLD" && canWrite && (
-          <>
-            {next.length > 0 && (
-              <select className="form-select form-select-sm" style={{ width: 150 }} value="" disabled={transitioning === o.id} onChange={(e) => e.target.value && transition(o.id, e.target.value)}>
-                <option value="" disabled>— {o.status} —</option>
-                {next.map((s) => <option key={s} value={s}>{s}</option>)}
-              </select>
-            )}
-            <button className="btn btn-sm btn-outline-secondary" title="Receipt" onClick={() => setReceiptOrder(o.id)}><i className="bi bi-receipt"></i></button>
-            {canVoidRefund && o.status === "COMPLETED" && (
-              <button className="btn btn-sm btn-outline-danger" title="Void/Refund" onClick={() => setConfirmAction({ orderId: o.id, kind: o.paymentStatus === "COLLECTED" ? "refund" : "void" })}><i className="bi bi-x-circle"></i></button>
-            )}
-          </>
-        )}
-        <button className="btn btn-sm btn-outline-secondary" title="Details" onClick={() => setOrderDetail(o)}><i className="bi bi-view-list"></i></button>
-      </div>
-    );
-  };
+      const next = ALLOWED[o.status] ?? [];
+      const isDeliv = (o.deliveryType ?? "delivery") === "delivery"; // legacy/online = delivery
+      const editable = ["RECEIVED", "CONFIRMED", "ON_HOLD"].includes(o.status);
+      return (
+        <div className="d-flex flex-wrap gap-1 align-items-center">
+          {looking(o)}
+          {/* Pending routing analysis */}
+          {o.status === "RECEIVED" && (
+            <span className={`badge ${isDeliv ? "text-bg-primary" : "text-bg-success"}`}>
+              {isDeliv ? <><i className="bi bi-truck me-1"></i>delivery</> : <><i className="bi bi-shop me-1"></i>pickup</>}
+            </span>
+          )}
+          {o.status === "ON_HOLD" && canWrite && (
+            <>
+              <button className="btn btn-sm btn-outline-warning" onClick={() => openEdit(o)}><i className="bi bi-pencil me-1"></i>Edit</button>
+              <button className="btn btn-sm btn-success" onClick={() => { setPayHold({ id: o.id, orderNumber: o.orderNumber, totalMinor: o.totalMinor }); setPayMethod("cash"); setTendered(""); }}><i className="bi bi-cash me-1"></i>Pay</button>
+              <button className="btn btn-sm btn-outline-success" onClick={() => { setPayHold({ id: o.id, orderNumber: o.orderNumber, totalMinor: o.totalMinor }); setPayMethod("credit"); }}><i className="bi bi-journal me-1"></i>Utang</button>
+              {canVoidRefund && <button className="btn btn-sm btn-outline-danger" onClick={() => setConfirmAction({ orderId: o.id, kind: "voidHold" })}><i className="bi bi-pause-btn me-1"></i>Void</button>}
+            </>
+          )}
+          {o.status !== "ON_HOLD" && canWrite && (
+            <>
+              {/* RECEIVED (Pending): route by analysis */}
+              {o.status === "RECEIVED" && (
+                <>
+                  {editable && <button className="btn btn-sm btn-outline-warning" onClick={() => openEdit(o)}><i className="bi bi-pencil me-1"></i>Edit</button>}
+                  {!isDeliv ? (
+                    <button className="btn btn-sm btn-success" disabled={transitioning === o.id} onClick={() => completeNow(o.id)}><i className="bi bi-check2-circle me-1"></i>Move to completed</button>
+                  ) : (
+                    <button className="btn btn-sm btn-primary" disabled={transitioning === o.id} onClick={() => transition(o.id, "CONFIRMED")}><i className="bi bi-check-lg me-1"></i>Confirm</button>
+                  )}
+                </>
+              )}
+              {/* On Process: one-tap delivery routing */}
+              {isDeliv && ["CONFIRMED", "PREPARING", "READY"].includes(o.status) && (
+                <button className="btn btn-sm btn-primary" disabled={transitioning === o.id} onClick={() => sendForDelivery(o.id)}><i className="bi bi-truck me-1"></i>Send for delivery</button>
+              )}
+              {isDeliv && o.status === "CONFIRMED" && editable && (
+                <button className="btn btn-sm btn-outline-warning" onClick={() => openEdit(o)}><i className="bi bi-pencil me-1"></i>Edit</button>
+              )}
+              {next.length > 0 && (
+                <select className="form-select form-select-sm" style={{ width: 150 }} value="" disabled={transitioning === o.id} onChange={(e) => e.target.value && transition(o.id, e.target.value)}>
+                  <option value="" disabled>— {o.status} —</option>
+                  {next.map((s) => <option key={s} value={s}>{s}</option>)}
+                </select>
+              )}
+              <button className="btn btn-sm btn-outline-secondary" title="Receipt" onClick={() => setReceiptOrder(o.id)}><i className="bi bi-receipt"></i></button>
+              {canVoidRefund && o.status === "COMPLETED" && (
+                <button className="btn btn-sm btn-outline-danger" title="Void/Refund" onClick={() => setConfirmAction({ orderId: o.id, kind: o.paymentStatus === "COLLECTED" ? "refund" : "void" })}><i className="bi bi-x-circle"></i></button>
+              )}
+            </>
+          )}
+          <button className="btn btn-sm btn-outline-secondary" title="Details" onClick={() => setOrderDetail(o)}><i className="bi bi-view-list"></i></button>
+        </div>
+      );
+    };
 
   const openEdit = (o: AdminOrder) => {
     fetch(`${API_URL}/admin/orders/${o.id}`, { headers: adminHeaders() })
       .then((r) => r.json())
       .then((d) => setEditHold({
-        id: o.id,
-        orderNumber: o.orderNumber,
-        lines: (d?.items ?? []).map((i: any) => ({ productId: i.productId ?? "", productName: i.productName, quantity: i.quantity, unitPriceMinor: i.unitPriceMinor })),
-      }))
+              id: o.id,
+              orderNumber: o.orderNumber,
+              status: o.status,
+              lines: (d?.items ?? []).map((i: any) => ({ productId: i.productId ?? "", productName: i.productName, quantity: i.quantity, unitPriceMinor: i.unitPriceMinor })),
+            }))
       .catch(() => setError("Could not load held order"));
   };
 
@@ -413,9 +486,9 @@ export default function OrdersPanel() {
             <div className="modal-dialog modal-dialog-centered">
               <div className="modal-content">
                 <div className="modal-header">
-                  <h5 className="modal-title">Edit held order — {editHold.orderNumber}</h5>
-                  <button type="button" className="btn-close" onClick={() => setEditHold(null)}></button>
-                </div>
+                                  <h5 className="modal-title">Edit order — {editHold.orderNumber}</h5>
+                                  <button type="button" className="btn-close" onClick={() => setEditHold(null)}></button>
+                                </div>
                 <div className="modal-body">
                   <select className="form-select form-select-sm mb-2" value="" onChange={(e) => e.target.value && addHoldLine(e.target.value)}>
                     <option value="" disabled>+ Add product…</option>
@@ -438,9 +511,9 @@ export default function OrdersPanel() {
                   )}
                 </div>
                 <div className="modal-footer">
-                  <button className="btn btn-outline-secondary" onClick={() => setEditHold(null)}>Cancel</button>
-                  <button className="btn btn-primary" onClick={saveHoldEdit}>Save changes</button>
-                </div>
+                                  <button className="btn btn-outline-secondary" onClick={() => setEditHold(null)}>Cancel</button>
+                                  <button className="btn btn-primary" onClick={() => (editHold.status === "ON_HOLD" ? saveHoldEdit() : saveOrderEdit())}>Save changes</button>
+                                </div>
               </div>
             </div>
           </div>

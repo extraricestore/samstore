@@ -30,6 +30,7 @@ export interface AdminOrder {
   createdAt: string;
   paymentStatus?: string;
   source?: string;
+  deliveryType?: string;
 }
 
 /** Loads the admin token from session storage (client-side only). */
