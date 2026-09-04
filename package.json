@@ -14,7 +14,7 @@
     "start:web": "npm run start -w @sam-store/web",
     "dev:api": "cd apps/api && npx tsx src/main.ts",
     "dev:web": "cd apps/web && NEXT_PUBLIC_API_URL=http://localhost:4100 npx next dev -p 3000",
-    "test": "node --import tsx --test apps/api/src/domain/*.test.ts apps/api/src/checkout/*.test.ts apps/api/src/cart/*.test.ts apps/api/src/auth/*.test.ts apps/api/src/messenger/*.test.ts apps/api/src/notifications/*.test.ts apps/api/src/admin/*.test.ts apps/api/src/pos/*.test.ts apps/api/src/payments/*.test.ts apps/api/src/credit/*.test.ts apps/api/src/expenses/*.test.ts apps/api/src/purchases/*.test.ts apps/api/src/inventory/*.test.ts",
+    "test": "node --import tsx --test apps/api/src/domain/*.test.ts apps/api/src/checkout/*.test.ts apps/api/src/cart/*.test.ts apps/api/src/auth/*.test.ts apps/api/src/messenger/*.test.ts apps/api/src/notifications/*.test.ts apps/api/src/admin/*.test.ts apps/api/src/pos/*.test.ts apps/api/src/payments/*.test.ts apps/api/src/credit/*.test.ts apps/api/src/expenses/*.test.ts apps/api/src/purchases/*.test.ts apps/api/src/inventory/*.test.ts apps/api/src/reports/*.test.ts",
     "typecheck": "tsc --noEmit -p packages/contracts/tsconfig.json && tsc --noEmit -p apps/api/tsconfig.json && tsc --noEmit -p apps/web/tsconfig.json",
     "db:validate": "prisma validate",
     "db:format": "prisma format",

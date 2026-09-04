@@ -20,8 +20,9 @@ import ExpensesPanel from "../../../components/admin/ExpensesPanel";
 import PurchasesPanel from "../../../components/admin/PurchasesPanel";
 import InventoryPanel from "../../../components/admin/InventoryPanel";
 import StoreLinkPanel from "../../../components/admin/StoreLinkPanel";
+import ReportsPanel from "../../../components/admin/ReportsPanel";
 
-type Tab = "pos" | "orders" | "utang" | "products" | "inventory" | "expenses" | "purchases" | "settings" | "storelink" | "vouchers" | "stores" | "customers" | "analytics" | "maintenance" | "team" | "warehouses";
+type Tab = "pos" | "orders" | "utang" | "products" | "inventory" | "expenses" | "purchases" | "settings" | "storelink" | "vouchers" | "stores" | "customers" | "analytics" | "reports" | "maintenance" | "team" | "warehouses";
 
 interface MyStore { id: string; name: string; slug: string; role: string; }
 
@@ -91,7 +92,7 @@ export default function AdminDashboard() {
               </select>
             )}
             <ul className="nav nav-pills">
-              {(["pos", "orders", "utang", "products", "inventory", "expenses", "purchases", "team", "customers", "analytics", "vouchers", "settings", "storelink", "warehouses", "stores", "maintenance"] as Tab[]).map((t) => (
+              {(["pos", "orders", "utang", "products", "inventory", "expenses", "purchases", "team", "customers", "analytics", "reports", "vouchers", "settings", "storelink", "warehouses", "stores", "maintenance"] as Tab[]).map((t) => (
                 <li className="nav-item" key={t}>
                   <button
                     className={`nav-link text-capitalize ${tab === t ? "active bg-primary" : "text-light"}`}
@@ -136,6 +137,7 @@ export default function AdminDashboard() {
         {tab === "expenses" && <ExpensesPanel />}
         {tab === "purchases" && <PurchasesPanel />}
         {tab === "storelink" && <StoreLinkPanel />}
+        {tab === "reports" && <ReportsPanel />}
         {tab === "orders" && <OrdersPanel />}
         {tab === "products" && <ProductsPanel />}
         {tab === "settings" && <SettingsPanel />}
