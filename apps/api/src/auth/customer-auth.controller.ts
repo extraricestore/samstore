@@ -1,4 +1,4 @@
-import { Body, Controller, HttpException, HttpStatus, Inject, Post } from "@nestjs/common";
+import { Body, Controller, Get, Headers, HttpException, HttpStatus, Inject, Post, Query } from "@nestjs/common";
 import type { ApiError } from "@sam-store/contracts";
 import { CustomerAuthService, CUSTOMER_AUTH_SERVICE } from "./customer-auth.service.js";
 
@@ -29,6 +29,15 @@ export class CustomerAuthController {
   @Post("login")
   async login(@Body() body: { email: string; password: string }) {
     const r = await this.auth.login(body);
+    if (!r.ok) throw new HttpException(r.error, statusFor(r.error));
+    return r.value;
+  }
+
+  /** GET /auth/customer/me?storeId= — loyalty, credit, recent orders (U6). */
+  @Get("me")
+  async me(@Headers("authorization") authorization?: string, @Query("storeId") storeId?: string) {
+    const token = authorization?.replace(/^Bearer\s+/i, "") ?? "";
+    const r = await this.auth.me(token, storeId);
     if (!r.ok) throw new HttpException(r.error, statusFor(r.error));
     return r.value;
   }

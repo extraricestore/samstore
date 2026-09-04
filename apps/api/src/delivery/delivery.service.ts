@@ -2,6 +2,7 @@
 // (no per-order assignment). Marks DELIVERED / FAILED_DELIVERY (+ reason). Tenant-scoped.
 
 import { prisma } from "../persistence/prisma-repositories.js";
+import { LoyaltyService } from "../loyalty/loyalty.service.js";
 import type { ApiError } from "@sam-store/contracts";
 
 export type DeliveryResult<T> = { ok: true; value: T } | { ok: false; error: ApiError };
@@ -54,6 +55,10 @@ export class DeliveryService {
         data: { orderId, storeId, fromStatus: "OUT_FOR_DELIVERY", toStatus, reason: reason?.trim() ?? null, actorType: "delivery" },
       });
     });
+    // Award loyalty points when a delivery is completed (same rule as admin transition).
+    if (toStatus === "DELIVERED") {
+      await new LoyaltyService().earnForDeliveredOrder(orderId);
+    }
     return { ok: true, value: { id: orderId, status: toStatus, paymentStatus } };
   }
 }

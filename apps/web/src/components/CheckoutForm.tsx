@@ -17,16 +17,25 @@ const toPesos = (m: number) => `₱${(m / 100).toFixed(2)}`;
 export default function CheckoutForm({ cartToken, store, subtotalMinor, deliveryFeeMinor, onSuccess, onClose }: CheckoutFormProps) {
   const customerToken = typeof window !== "undefined" ? localStorage.getItem("samstore.customer.token") : null;
   const [step, setStep] = useState<1 | 2 | 3>(1);
-  const [form, setForm] = useState({
-    customerName: "",
-    customerPhone: "",
-    deliveryAddressLine1: "",
-    deliveryAddressLine2: "",
-    landmark: "",
-    deliverySchedule: "",
-    notes: "",
-    voucherCode: "",
-    loyaltyPoints: "",
+  const [form, setForm] = useState(() => {
+    let saved: { name?: string; phone?: string } = {};
+    if (typeof window !== "undefined") {
+      try {
+        const raw = localStorage.getItem("samstore.lastContact");
+        if (raw) saved = JSON.parse(raw);
+      } catch { /* ignore */ }
+    }
+    return {
+      customerName: saved.name ?? "",
+      customerPhone: saved.phone ?? "",
+      deliveryAddressLine1: "",
+      deliveryAddressLine2: "",
+      landmark: "",
+      deliverySchedule: "",
+      notes: "",
+      voucherCode: "",
+      loyaltyPoints: "",
+    };
   });
   const [deliveryType, setDeliveryType] = useState<"delivery" | "pickup">(store.deliveryEnabled ? "delivery" : "pickup");
   const [paymentMethod, setPaymentMethod] = useState<"cod" | "credit">("cod");
