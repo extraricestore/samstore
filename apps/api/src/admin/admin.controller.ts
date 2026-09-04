@@ -177,9 +177,10 @@ export class AdminController {
       orderBy: { createdAt: "desc" },
       take: 100,
       select: {
-              id: true, orderNumber: true, status: true, totalMinor: true, currencyCode: true,
-              customerName: true, customerPhone: true, createdAt: true, paymentStatus: true, source: true,
-            },
+        id: true, orderNumber: true, status: true, totalMinor: true, currencyCode: true,
+        customerName: true, customerPhone: true, createdAt: true, paymentStatus: true, source: true,
+        deliveryType: true,
+      },
     });
     return { orders: list, storeId };
   }

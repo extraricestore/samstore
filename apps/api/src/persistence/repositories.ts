@@ -57,6 +57,7 @@ export interface OrderRecord {
   storeId: string;
   status: string;
   currencyCode: string;
+  deliveryType?: string;
   subtotalMinor: number;
   deliveryFeeMinor: number;
   discountMinor: number;

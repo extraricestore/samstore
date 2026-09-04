@@ -507,6 +507,7 @@ model Order {
   store                Store         @relation(fields: [storeId], references: [id])
   status               OrderStatus   @default(RECEIVED)
   source               String        @default("online") // online | pos
+  deliveryType         String        @default("delivery") // delivery | pickup (UI U5)
   currencyCode         String
   subtotalMinor        Int
   deliveryFeeMinor     Int           @default(0)

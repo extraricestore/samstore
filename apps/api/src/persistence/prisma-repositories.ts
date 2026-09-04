@@ -293,6 +293,7 @@ export class PrismaOrderRepository implements OrderRepository {
           storeId: order.storeId,
           status: order.status as OrderStatus,
           currencyCode: order.currencyCode,
+          deliveryType: order.deliveryType ?? "delivery",
           subtotalMinor: order.subtotalMinor,
           deliveryFeeMinor: order.deliveryFeeMinor,
           discountMinor: order.discountMinor,

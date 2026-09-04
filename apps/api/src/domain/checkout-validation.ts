@@ -20,9 +20,19 @@ export function validateCheckoutInput(input: CheckoutRequest): ValidationResult 
     errors.push("customerPhone must be a valid phone number");
   }
 
-  if (!input.deliveryAddressLine1 || input.deliveryAddressLine1.trim().length < 5) {
-    errors.push("deliveryAddressLine1 must be at least 5 characters");
-  } else if (input.deliveryAddressLine1.length > 200) {
+  const deliveryType = input.deliveryType ?? "delivery";
+  if (deliveryType !== "delivery" && deliveryType !== "pickup") {
+    errors.push("deliveryType must be 'delivery' or 'pickup'");
+  }
+
+  // Address required for delivery; optional for pickup.
+  if (deliveryType === "delivery") {
+    if (!input.deliveryAddressLine1 || input.deliveryAddressLine1.trim().length < 5) {
+      errors.push("deliveryAddressLine1 must be at least 5 characters");
+    } else if (input.deliveryAddressLine1.length > 200) {
+      errors.push("deliveryAddressLine1 must be at most 200 characters");
+    }
+  } else if (input.deliveryAddressLine1 !== undefined && input.deliveryAddressLine1.length > 200) {
     errors.push("deliveryAddressLine1 must be at most 200 characters");
   }
 

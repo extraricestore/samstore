@@ -32,6 +32,17 @@ export default function Storefront({ store, products }: StorefrontProps) {
   const [cartError, setCartError] = useState<string | null>(null);
   const [lastOrder, setLastOrder] = useState<CheckoutResponse | null>(null);
   const [accountOpen, setAccountOpen] = useState(false);
+  // U4: catalog search + category filter (client-side over loaded products)
+  const [search, setSearch] = useState("");
+  const [category, setCategory] = useState("");
+
+  const categories = [...new Set(products.map((p) => p.category?.name).filter(Boolean))] as string[];
+  const filteredProducts = products.filter((p) => {
+    const q = search.trim().toLowerCase();
+    const inSearch = !q || p.name.toLowerCase().includes(q) || p.description?.toLowerCase().includes(q) || (p.sku ?? "").toLowerCase().includes(q);
+    const inCategory = !category || p.category?.name === category;
+    return inSearch && inCategory;
+  });
 
   const productById = useCallback(
     () => new Map(products.map((p) => [p.id, p])),
@@ -100,7 +111,6 @@ export default function Storefront({ store, products }: StorefrontProps) {
 
   const cartCount = lines.reduce((s, l) => s + l.quantity, 0);
   const subtotal = lines.reduce((s, l) => s + l.product.priceMinor * l.quantity, 0);
-  const total = subtotal + (subtotal > 0 ? store.deliveryFeeMinor : 0);
 
   if (store.orderingPaused || !store.guestOrderingEnabled) {
     return (
@@ -171,34 +181,88 @@ export default function Storefront({ store, products }: StorefrontProps) {
         )}
         {view === "done" && lastOrder ? (
           <div className="text-center py-5">
-            <i className="bi bi-check-circle-fill text-success fs-1 d-block mb-3"></i>
-            <h2 className="h4">Order placed!</h2>
-            <p className="mb-1">Your order number is</p>
-            <h3 className="fw-bold text-primary">{lastOrder.orderNumber}</h3>
-            <p className="text-muted mb-4">Total {toPesos(lastOrder.totalMinor)} · Cash on delivery</p>
-            <p className="small text-muted">Keep this link to track your order:</p>
-            <code className="d-block mb-3 small text-break">{lastOrder.claimToken}</code>
-            <OrderTracker initialToken={lastOrder.claimToken} />
-            <div className="mt-4">
-              <button className="btn btn-outline-secondary" onClick={() => setView("menu")}>Back to menu</button>
+            <div className="card shadow-sm border-success" style={{ maxWidth: 480, margin: "0 auto" }}>
+              <div className="card-body text-center p-4">
+                <i className="bi bi-check-circle-fill text-success fs-1 d-block mb-2"></i>
+                <h2 className="h4 mb-1">Order placed!</h2>
+                <p className="text-muted small mb-2">Thanks for ordering from {store.name}.</p>
+                <div className="h3 fw-bold text-primary">{lastOrder.orderNumber}</div>
+                <p className="mb-1">Total <strong>{toPesos(lastOrder.totalMinor)}</strong> · Cash on delivery</p>
+                <OrderTracker initialToken={lastOrder.claimToken} />
+                <div className="d-grid gap-2 mt-3">
+                  <button
+                    className="btn btn-sm btn-outline-secondary"
+                    onClick={() => { navigator.clipboard?.writeText(lastOrder.claimToken); }}
+                  >
+                    <i className="bi bi-clipboard me-1"></i>Copy tracking token
+                  </button>
+                  <button
+                    className="btn btn-sm btn-outline-primary"
+                    onClick={() => {
+                      const text = `Order ${lastOrder.orderNumber} from ${store.name} — total ${toPesos(lastOrder.totalMinor)}. Track with token: ${lastOrder.claimToken}`;
+                      if (typeof navigator !== "undefined" && "share" in navigator) { try { navigator.share({ title: `Your ${store.name} order`, text }); return; } catch { /* fall through */ } }
+                      navigator.clipboard?.writeText(text);
+                    }}
+                  >
+                    <i className="bi bi-share me-1"></i>Share order
+                  </button>
+                </div>
+                <div className="mt-3">
+                  <button className="btn btn-outline-secondary btn-sm" onClick={() => setView("menu")}>Back to menu</button>
+                </div>
+              </div>
             </div>
           </div>
         ) : view === "checkout" ? (
           <CheckoutForm
             cartToken={cartToken ?? ""}
+            store={store}
+            subtotalMinor={subtotal}
             deliveryFeeMinor={store.deliveryFeeMinor}
-            totalMinor={total}
             onSuccess={handleCheckoutSuccess}
             onClose={() => setView("menu")}
           />
         ) : (
-          <div className="row g-3">
-            {products.map((p) => (
-              <div className="col-6 col-md-4 col-lg-3" key={p.id}>
-                <ProductCard product={p} onAdd={addProduct} />
+          <>
+            <div className="d-flex flex-wrap gap-2 align-items-center mb-3">
+              <input
+                className="form-control form-control-sm"
+                style={{ maxWidth: 280 }}
+                placeholder="Search menu…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+              <button
+                className={`btn btn-sm ${category === "" ? "btn-primary" : "btn-outline-primary"}`}
+                onClick={() => setCategory("")}
+              >
+                All
+              </button>
+              {categories.map((c) => (
+                <button
+                  key={c}
+                  className={`btn btn-sm ${category === c ? "btn-primary" : "btn-outline-primary"}`}
+                  onClick={() => setCategory(category === c ? "" : c)}
+                >
+                  {c}
+                </button>
+              ))}
+            </div>
+            {filteredProducts.length === 0 ? (
+              <p className="text-muted text-center py-4">
+                <i className="bi bi-search fs-3 d-block mb-2"></i>
+                Nothing matches your search.
+              </p>
+            ) : (
+              <div className="row g-3">
+                {filteredProducts.map((p) => (
+                  <div className="col-6 col-md-4 col-lg-3" key={p.id}>
+                    <ProductCard product={p} onAdd={addProduct} />
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            )}
+          </>
         )}
       </main>
 

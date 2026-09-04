@@ -171,12 +171,16 @@ export class CheckoutService {
       // surfaces revalidated.priceChanges to the customer (AGENTS.md: explain changes).
     }
 
+    // 5b. Delivery type (U5): pickup = no fee + no address required.
+    const deliveryType = request.deliveryType ?? "delivery";
+    const deliveryFee = deliveryType === "pickup" ? 0 : store.deliveryFeeMinor;
+
     // 6. Server-authoritative totals
     let totals;
     try {
       totals = computeOrderTotals({
         lines: revalidated.lines,
-        deliveryFeeMinor: store.deliveryFeeMinor,
+        deliveryFeeMinor: deliveryFee,
       });
     } catch (e) {
       if (e instanceof InvalidPriceInputError) {
@@ -259,6 +263,7 @@ export class CheckoutService {
       storeId: store.id,
       status: "RECEIVED",
       currencyCode: store.currencyCode,
+      deliveryType,
       subtotalMinor: totals.subtotalMinor,
       deliveryFeeMinor: totals.deliveryFeeMinor,
       discountMinor: discountMinor, // voucher discount (0 when none)
@@ -269,6 +274,7 @@ export class CheckoutService {
         priceChanges: revalidated.priceChanges,
         store: { slug: store.slug, name: store.name },
         paymentMethod,
+        deliveryType,
         ...(request.voucherCode ? { voucherCode: request.voucherCode.toUpperCase(), discountMinor } : {}),
         ...(loyaltyPoints > 0 ? { loyaltyPointsRedeemed: loyaltyPoints } : {}),
       },
@@ -278,7 +284,7 @@ export class CheckoutService {
       cartToken: cart.token,
       customerName: request.customerName.trim(),
       customerPhone: request.customerPhone.trim(),
-      deliveryAddressLine1: request.deliveryAddressLine1.trim(),
+      deliveryAddressLine1: request.deliveryAddressLine1?.trim() ?? "",
       deliveryAddressLine2: request.deliveryAddressLine2?.trim() ?? null,
       landmark: request.landmark?.trim() ?? null,
       deliverySchedule: request.deliverySchedule?.trim() ?? null,

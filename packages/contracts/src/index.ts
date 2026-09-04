@@ -106,12 +106,13 @@ export interface CheckoutRequest {
   cartToken: string;
   customerName: string;
   customerPhone: string;
-  deliveryAddressLine1: string;
+  deliveryAddressLine1?: string; // optional when deliveryType = pickup
   deliveryAddressLine2?: string;
   landmark?: string;
   deliverySchedule?: string;
   notes?: string;
-  /** slice scope: "cod" only; any other value rejected server-side */
+  /** delivery | pickup (pickup: no delivery fee, address not required) — UI U5. */
+  deliveryType?: "delivery" | "pickup";
   /** COD for guests/unapproved; "credit" allowed only for approved customers up to limit. */
   paymentMethod?: "cod" | "credit";
   /** client-generated; same value on retry → same order, no duplicates */

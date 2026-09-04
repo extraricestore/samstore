@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CheckoutResponse } from "../types";
 
 interface TrackerProps {
@@ -24,6 +24,16 @@ export default function OrderTracker({ initialToken = null }: TrackerProps) {
   const [order, setOrder] = useState<OrderView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const autoLoaded = useRef(false);
+
+  // Auto-load once when embedded after checkout (e.g. success tracking card).
+  useEffect(() => {
+    if (initialToken && !autoLoaded.current) {
+      autoLoaded.current = true;
+      track();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const track = async (e?: React.FormEvent) => {
     e?.preventDefault();
