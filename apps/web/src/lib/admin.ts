@@ -89,7 +89,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Manage",
     items: [
       { id: "orders", label: "Orders", icon: "bi-receipt" },
-      { id: "utang", label: "Utang", icon: "bi-journal-text" },
+      { id: "utang", label: "Credit Ledger", icon: "bi-journal-text" },
       { id: "products", label: "Products", icon: "bi-box-seam" },
       { id: "inventory", label: "Inventory", icon: "bi-boxes" },
       { id: "expenses", label: "Expenses", icon: "bi-receipt-cutoff" },
