@@ -498,6 +498,44 @@ export class AdminController {
     return ledger;
   }
 
+  /** PATCH /admin/orders/:id/items — W1: stock-delta item edit (RECEIVED/CONFIRMED/ON_HOLD). */
+  @Patch("orders/:id/items")
+  async orderItems(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Param("id") id: string,
+    @Body() body: { items: { productId: string; quantity: number }[] },
+    @Headers("x-store-id") headerStoreId?: string,
+  ) {
+    const user = req.user;
+    requireView(user);
+    const storeId = await this.resolveStoreId(user, headerStoreId);
+    const result = await this.ordersAdmin.replaceOrderItems(storeId, id, body?.items ?? []);
+    if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+    return { ...result.value, storeId };
+  }
+
+  /** POST /admin/orders/:id/send-for-delivery — W1: one-tap advance to OUT_FOR_DELIVERY. */
+  @Post("orders/:id/send-for-delivery")
+  async orderSendForDelivery(@Req() req: Request & { user?: AuthPrincipal }, @Param("id") id: string, @Headers("x-store-id") headerStoreId?: string) {
+    const user = req.user;
+    requireView(user);
+    const storeId = await this.resolveStoreId(user, headerStoreId);
+    const result = await this.ordersAdmin.sendForDelivery(storeId, id);
+    if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+    return { ...result.value, storeId };
+  }
+
+  /** POST /admin/orders/:id/complete-now — W1: pickup/POS → COMPLETED directly. */
+  @Post("orders/:id/complete-now")
+  async orderCompleteNow(@Req() req: Request & { user?: AuthPrincipal }, @Param("id") id: string, @Headers("x-store-id") headerStoreId?: string) {
+    const user = req.user;
+    requireView(user);
+    const storeId = await this.resolveStoreId(user, headerStoreId);
+    const result = await this.ordersAdmin.completeNow(storeId, id);
+    if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+    return { ...result.value, storeId };
+  }
+
   /** GET /admin/analytics/summary — dashboard KPIs. */
   @Get("analytics/summary")
   async analyticsSummary(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {

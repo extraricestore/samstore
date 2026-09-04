@@ -190,6 +190,26 @@ export interface PosSellResponse {
   changeMinor?: number;
 }
 
+// ─────────────────────────────── Orders workflow (W1) ───────────────────────────────
+
+export interface OrderItemsRequest {
+  /** full replacement line set (totals + stock recomputed server-side) */
+  items: PosSellItem[];
+}
+
+export interface OrderItemsResponse {
+  id: string;
+  totalMinor: number;
+  status: string;
+}
+
+export interface OrderRoutingResponse {
+  id: string;
+  orderNumber: string;
+  status: string;
+  deliveryType: string;
+}
+
 export interface OrderViewDTO {
   orderNumber: string;
   status: string;
