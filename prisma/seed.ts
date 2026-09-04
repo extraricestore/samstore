@@ -106,7 +106,7 @@ async function main() {
         description: p.description,
         priceMinor: p.priceMinor,
         categoryId: p.categoryId,
-        stockLevel: { create: { storeId: store.id, quantityOnHand: p.stock } },
+        stockLevels: { create: { storeId: store.id, quantityOnHand: p.stock } },
       },
     });
     productIds.push(product.id);
@@ -148,8 +148,47 @@ async function main() {
   console.log(`  link:    sam-store + token ${link?.token ?? "(missing)"}`);
   console.log(`  products: ${products.map((p) => p.sku).join(", ")}`);
   console.log(`  demo cart token: cart-demo-token`);
+
+  // Ready-made demo logins for every staff role at Sam's Store (P1–P12 walkthrough).
+  await seedDemoAccounts();
 }
 
+// Ready-made demo logins for every staff role at Sam's Store (P1–P12 walkthrough).
+// All upserted by email — safe to re-run; passwords are fixed and known.
+async function seedDemoAccounts() {
+  const store = await prisma.store.findUnique({ where: { slug: "sam-store" } });
+  if (!store) {
+    console.log("  (skip demo accounts — sam-store not seeded)");
+    return;
+  }
+
+  const demos: { email: string; name: string; role: string; password: string; memberships: boolean }[] = [
+    { email: "manager@samstore.test", name: "Demo Manager", role: "MANAGER", password: "manager-pass-123", memberships: true },
+    { email: "staff@samstore.test", name: "Demo Staff", role: "STAFF", password: "staff-pass-123", memberships: true },
+    { email: "agent@samstore.test", name: "Demo Sales Agent", role: "SALES_AGENT", password: "agent-pass-123", memberships: true },
+    { email: "delivery@samstore.test", name: "Demo Courier", role: "DELIVERY", password: "delivery-pass-123", memberships: true },
+    { email: "customer@samstore.test", name: "Demo Customer", role: "CUSTOMER", password: "customer-pass-123", memberships: false },
+  ];
+
+  for (const d of demos) {
+    const hash = await bcrypt.hash(d.password, 12);
+    const user = await prisma.user.upsert({
+      where: { email: d.email },
+      update: { name: d.name, role: d.role, passwordHash: hash },
+      create: { email: d.email, name: d.name, role: d.role, passwordHash: hash },
+    });
+    if (d.memberships) {
+      await prisma.userStore.upsert({
+        where: { userId_storeId: { userId: user.id, storeId: store.id } },
+        update: { role: d.role as never, status: "ACTIVE" },
+        create: { userId: user.id, storeId: store.id, role: d.role as never, status: "ACTIVE" },
+      });
+    }
+    console.log(`  demo ${d.role.toLowerCase()}: ${d.email} / ${d.password}`);
+  }
+}
+
+// Ready-made demo accounts (staff roles + customer) at Sam's Store.
 main()
   .catch((e) => {
     console.error(e);
