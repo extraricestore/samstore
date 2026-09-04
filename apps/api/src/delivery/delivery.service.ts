@@ -33,6 +33,25 @@ export class DeliveryService {
     });
   }
 
+  /** U7 — recently completed deliveries (recall for the courier). */
+  async recentDeliveries(storeId: string) {
+    return prisma.order.findMany({
+      where: { storeId, status: { in: ["DELIVERED", "FAILED_DELIVERY"] } },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+      select: {
+        id: true,
+        orderNumber: true,
+        status: true,
+        customerName: true,
+        customerPhone: true,
+        deliveryAddressLine1: true,
+        totalMinor: true,
+        createdAt: true,
+      },
+    });
+  }
+
   /** Mark DELIVERED (collects COD) or FAILED_DELIVERY (+ reason). OUT_FOR_DELIVERY only. */
   async markStatus(
     storeId: string,

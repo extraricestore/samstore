@@ -52,6 +52,15 @@ export class DeliveryController {
     return { deliveries: await this.deliverySvc.myDeliveries(storeId), storeId };
   }
 
+  /** GET /delivery/recent — last 10 delivered/failed (courier recall). */
+  @Get("recent")
+  async recent(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
+    const user = req.user;
+    this.requireDelivery(user);
+    const storeId = await this.resolveStore(user, headerStoreId);
+    return { recent: await this.deliverySvc.recentDeliveries(storeId), storeId };
+  }
+
   /** PATCH /delivery/orders/:id/status — DELIVERED | FAILED_DELIVERY (+ reason). */
   @Patch("orders/:id/status")
   async markStatus(
