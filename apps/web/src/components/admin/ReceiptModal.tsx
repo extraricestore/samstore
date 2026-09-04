@@ -27,21 +27,26 @@ interface ReceiptData {
 function useReceipt(orderId: string) {
   const [data, setData] = useState<ReceiptData | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [settings, setSettings] = useState<{ receiptHeader?: string | null; receiptFooter?: string | null; showVatLabel?: boolean } | null>(null);
   useEffect(() => {
     let alive = true;
+    fetch(`${API_URL}/admin/settings`, { headers: adminHeaders() })
+      .then((r) => r.json())
+      .then((d) => { if (alive) setSettings(d?.settings ?? null); })
+      .catch(() => {});
     fetch(`${API_URL}/admin/orders/${orderId}/receipt`, { headers: adminHeaders() })
       .then((r) => r.json())
       .then((d) => { if (alive) { if (d?.orderNumber) setData(d); else setError(d?.message ?? "Load failed"); } })
       .catch(() => alive && setError("Network error"));
     return () => { alive = false; };
   }, [orderId]);
-  return { data, error };
+  return { data, error, settings };
 }
 
 export default function ReceiptModal({ orderId, onClose }: { orderId: string; onClose: () => void }) {
-  const { data, error } = useReceipt(orderId);
+  const { data, error, settings } = useReceipt(orderId);
   const pesos = (m: number) => `₱${(m / 100).toFixed(2)}`;
-  const hasVatLabel = data ? data.source === "pos" || data.payments.length > 0 : false;
+  const showVat = settings?.showVatLabel ?? true;
 
   return (
     <>
@@ -57,6 +62,9 @@ export default function ReceiptModal({ orderId, onClose }: { orderId: string; on
               {!data && !error && <p className="text-muted small">Loading…</p>}
               {data && (
                 <div className="receipt-print">
+                  {settings?.receiptHeader && (
+                    <div className="text-center small text-muted mb-1">{settings.receiptHeader}</div>
+                  )}
                   <div className="text-center mb-2">
                     <div className="fw-bold">{data.storeName}</div>
                     <div className="small text-muted">Order {data.orderNumber}</div>
@@ -83,7 +91,7 @@ export default function ReceiptModal({ orderId, onClose }: { orderId: string; on
                       <div className="d-flex justify-content-between text-danger"><span>Discount</span><span>-{pesos(data.discountMinor)}</span></div>
                     )}
                     <div className="d-flex justify-content-between fw-bold"><span>TOTAL</span><span>{pesos(data.totalMinor)}</span></div>
-                    {hasVatLabel && <div className="text-muted mt-1">Prices VAT-inclusive (12%)</div>}
+                    {showVat && <div className="text-muted mt-1">Prices VAT-inclusive (12%)</div>}
                     <hr className="my-2" />
                     <div className="text-muted">Payment: {data.paymentMethod} · {data.paymentStatus}</div>
                     {data.payments.map((p) => (
@@ -97,6 +105,9 @@ export default function ReceiptModal({ orderId, onClose }: { orderId: string; on
                       </div>
                     ))}
                   </div>
+                  {settings?.receiptFooter && (
+                    <div className="text-center small text-muted mt-2">{settings.receiptFooter}</div>
+                  )}
                 </div>
               )}
             </div>

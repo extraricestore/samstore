@@ -172,6 +172,9 @@ model StoreSettings {
   pickupEnabled            Boolean  @default(false)
   deliveryFeeMinor         Int      @default(0)
   creditLimitMinor         Int      @default(0) // store-wide utang limit (0 = credit disabled)
+  receiptHeader            String? // P11: printed at top of receipts
+  receiptFooter            String? // P11: printed at bottom
+  showVatLabel             Boolean  @default(true) // P11: display-only VAT note (decision #2)
   closedStoreMessage       String?
   createdAt                DateTime @default(now())
   updatedAt                DateTime @updatedAt

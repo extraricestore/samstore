@@ -22,6 +22,10 @@ interface StoreSettings {
     pickupEnabled: boolean;
     orderCutoff: string | null;
     maxOpenOrdersPerCustomer: number;
+    creditLimitMinor: number;
+    receiptHeader: string | null;
+    receiptFooter: string | null;
+    showVatLabel: boolean;
   };
 }
 
@@ -33,11 +37,15 @@ export default function SettingsPanel() {
     orderCutoff: "",
     closedStoreMessage: "",
     maxOpenOrders: "10",
+    creditLimitPesos: "",
+    receiptHeader: "",
+    receiptFooter: "",
   });
   const [allowGuest, setAllowGuest] = useState(true);
   const [paused, setPaused] = useState(false);
   const [deliveryEnabled, setDeliveryEnabled] = useState(true);
   const [pickupEnabled, setPickupEnabled] = useState(false);
+  const [showVat, setShowVat] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -58,11 +66,15 @@ export default function SettingsPanel() {
         orderCutoff: d.settings.orderCutoff ?? "",
         closedStoreMessage: d.settings.closedStoreMessage ?? "",
         maxOpenOrders: d.settings.maxOpenOrdersPerCustomer.toString(),
+        creditLimitPesos: (d.settings.creditLimitMinor / 100).toString(),
+        receiptHeader: d.settings.receiptHeader ?? "",
+        receiptFooter: d.settings.receiptFooter ?? "",
       });
       setAllowGuest(d.settings.allowGuestOrders);
       setPaused(d.settings.orderingPaused);
       setDeliveryEnabled(d.settings.deliveryEnabled);
       setPickupEnabled(d.settings.pickupEnabled);
+      setShowVat(d.settings.showVatLabel);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Load failed");
     } finally {
@@ -91,6 +103,10 @@ export default function SettingsPanel() {
           orderCutoff: form.orderCutoff || null,
           closedStoreMessage: form.closedStoreMessage || null,
           maxOpenOrdersPerCustomer: parseInt(form.maxOpenOrders, 10) || 10,
+          creditLimitMinor: Math.round(parseFloat(form.creditLimitPesos || "0") * 100),
+          receiptHeader: form.receiptHeader || null,
+          receiptFooter: form.receiptFooter || null,
+          showVatLabel: showVat,
         }),
       });
       const body = await res.json();
@@ -173,11 +189,35 @@ export default function SettingsPanel() {
                   <input className="form-control" type="number" min="1" value={form.maxOpenOrders} onChange={(e) => setForm({ ...form, maxOpenOrders: e.target.value })} />
                 </div>
                 <div className="col-md-8">
-                  <label className="form-label small">Closed-store message</label>
-                  <input className="form-control" value={form.closedStoreMessage} onChange={(e) => setForm({ ...form, closedStoreMessage: e.target.value })} placeholder="We're taking a break — back soon!" />
-                </div>
-              </div>
-              <button className="btn btn-primary mt-3" type="submit" disabled={saving}>
+                                  <label className="form-label small">Closed-store message</label>
+                                  <input className="form-control" value={form.closedStoreMessage} onChange={(e) => setForm({ ...form, closedStoreMessage: e.target.value })} placeholder="We're taking a break — back soon!" />
+                                </div>
+                              </div>
+
+                              <hr className="my-3" />
+                              <h6 className="fw-bold">POS / Receipt settings</h6>
+                              <div className="row g-3 mt-1">
+                                <div className="col-md-4">
+                                  <label className="form-label small">Default utang credit limit (₱)</label>
+                                  <input className="form-control" type="number" step="0.01" min="0" value={form.creditLimitPesos} onChange={(e) => setForm({ ...form, creditLimitPesos: e.target.value })} placeholder="0 = credit disabled" />
+                                </div>
+                                <div className="col-md-8">
+                                  <div className="form-check form-switch">
+                                    <input className="form-check-input" type="checkbox" id="vat" checked={showVat} onChange={(e) => setShowVat(e.target.checked)} />
+                                    <label className="form-check-label" htmlFor="vat">Show VAT display-only label on receipts ("Prices VAT-inclusive, 12%")</label>
+                                  </div>
+                                </div>
+                                <div className="col-md-6">
+                                  <label className="form-label small">Receipt header text</label>
+                                  <input className="form-control" value={form.receiptHeader} onChange={(e) => setForm({ ...form, receiptHeader: e.target.value })} placeholder="e.g. Salamat po! / Store address & phone" />
+                                </div>
+                                <div className="col-md-6">
+                                  <label className="form-label small">Receipt footer text</label>
+                                  <input className="form-control" value={form.receiptFooter} onChange={(e) => setForm({ ...form, receiptFooter: e.target.value })} placeholder="e.g. No returns after 3 days" />
+                                </div>
+                              </div>
+
+                              <button className="btn btn-primary mt-3" type="submit" disabled={saving}>
                 {saving ? "Saving…" : "Save settings"}
               </button>
             </div>

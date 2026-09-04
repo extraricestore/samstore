@@ -15,6 +15,10 @@ export interface StoreSettingsInput {
   pickupEnabled?: boolean;
   orderCutoff?: string | null;
   maxOpenOrdersPerCustomer?: number;
+  creditLimitMinor?: number; // P11: default utang limit
+  receiptHeader?: string | null; // P11
+  receiptFooter?: string | null; // P11
+  showVatLabel?: boolean; // P11
 }
 
 export class StoreSettingsService {
@@ -47,6 +51,10 @@ export class StoreSettingsService {
         pickupEnabled: store.settings?.pickupEnabled ?? false,
         orderCutoff: store.settings?.orderCutoff ?? null,
         maxOpenOrdersPerCustomer: store.settings?.maxOpenOrdersPerCustomer ?? 10,
+        creditLimitMinor: store.settings?.creditLimitMinor ?? 0,
+        receiptHeader: store.settings?.receiptHeader ?? null,
+        receiptFooter: store.settings?.receiptFooter ?? null,
+        showVatLabel: store.settings?.showVatLabel ?? true,
       },
     };
   }
@@ -78,6 +86,10 @@ export class StoreSettingsService {
         ...(input.pickupEnabled !== undefined ? { pickupEnabled: input.pickupEnabled } : {}),
         ...(input.orderCutoff !== undefined ? { orderCutoff: input.orderCutoff } : {}),
         ...(input.maxOpenOrdersPerCustomer !== undefined ? { maxOpenOrdersPerCustomer: input.maxOpenOrdersPerCustomer } : {}),
+        ...(input.creditLimitMinor !== undefined ? { creditLimitMinor: input.creditLimitMinor } : {}),
+        ...(input.receiptHeader !== undefined ? { receiptHeader: input.receiptHeader } : {}),
+        ...(input.receiptFooter !== undefined ? { receiptFooter: input.receiptFooter } : {}),
+        ...(input.showVatLabel !== undefined ? { showVatLabel: input.showVatLabel } : {}),
       },
       create: {
         storeId,
@@ -90,6 +102,10 @@ export class StoreSettingsService {
         pickupEnabled: input.pickupEnabled ?? false,
         orderCutoff: input.orderCutoff ?? null,
         maxOpenOrdersPerCustomer: input.maxOpenOrdersPerCustomer ?? 10,
+        creditLimitMinor: input.creditLimitMinor ?? 0,
+        receiptHeader: input.receiptHeader ?? null,
+        receiptFooter: input.receiptFooter ?? null,
+        showVatLabel: input.showVatLabel ?? true,
       },
     });
     return { ok: true, value: { id: storeId } };
