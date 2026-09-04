@@ -180,7 +180,7 @@ export class AdminController {
     requireView(user);
     const storeId = await this.resolveStoreId(user, headerStoreId);
     const where: Record<string, unknown> = { storeId };
-    if (status) where.status = status.split(",");
+    if (status) where.status = { in: status.split(",") };
     if (from || to) {
       where.createdAt = {};
       if (from) (where.createdAt as Record<string, unknown>).gte = new Date(from);
