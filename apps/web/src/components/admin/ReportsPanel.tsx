@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { API_URL } from "../../config";
-import { adminHeaders } from "../../lib/admin";
+import { adminHeaders, getAdminRole, roleCan } from "../../lib/admin";
 
 interface ProfitData {
   revenueMinor: number; refundsMinor: number; netRevenueMinor: number;
@@ -23,35 +23,29 @@ export default function ReportsPanel() {
   const [sales, setSales] = useState<SalesData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const role = getAdminRole();
+  const canProfit = roleCan(role, "profit");
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const q = new URLSearchParams();
-    q.set("days", String(days));
     const to = new Date();
     const from = new Date(to.getTime() - days * 86_400_000);
-    q.delete("days");
-    q.append("from", from.toISOString());
-    q.append("to", to.toISOString());
+    const q = new URLSearchParams({ from: from.toISOString(), to: to.toISOString() });
     try {
-      const [pRes, sRes] = await Promise.all([
-        fetch(`${API_URL}/admin/reports/profit?${q.toString()}`, { headers: adminHeaders() }),
-        fetch(`${API_URL}/admin/reports/sales?${q.toString()}`, { headers: adminHeaders() }),
-      ]);
-      if (!pRes.ok) {
-        const d = await pRes.json();
-        setError(d?.message ?? "Profit report unavailable (owner/manager only)");
-      } else {
-        setProfit(await pRes.json());
+      if (canProfit) {
+        const pRes = await fetch(`${API_URL}/admin/reports/profit?${q.toString()}`, { headers: adminHeaders() });
+        if (pRes.ok) setProfit(await pRes.json());
+        else setError((await pRes.json())?.message ?? "Profit report unavailable");
       }
+      const sRes = await fetch(`${API_URL}/admin/reports/sales?${q.toString()}`, { headers: adminHeaders() });
       if (sRes.ok) setSales(await sRes.json());
     } catch (e) {
       setError(e instanceof Error ? e.message : "Load failed");
     } finally {
       setLoading(false);
     }
-  }, [days]);
+  }, [days, canProfit]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -68,7 +62,9 @@ export default function ReportsPanel() {
             <option value={30}>Last 30 days</option>
             <option value={90}>Last 90 days</option>
           </select>
-          <button className="btn btn-outline-secondary btn-sm" onClick={exportProfit}><i className="bi bi-filetype-csv me-1"></i>CSV</button>
+          {canProfit && (
+            <button className="btn btn-outline-secondary btn-sm" onClick={exportProfit}><i className="bi bi-filetype-csv me-1"></i>CSV</button>
+          )}
           <button className="btn btn-outline-secondary btn-sm" onClick={print}><i className="bi bi-printer me-1"></i>Print</button>
         </div>
       </div>

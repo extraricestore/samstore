@@ -2,8 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getAdminToken, getAdminStoreId, setAdminStoreId } from "../../../lib/admin";
+import {
+  getAdminToken, getAdminStoreId, setAdminStoreId, getAdminRole,
+  NAV_GROUPS, allowedTabs, defaultTabFor,
+} from "../../../lib/admin";
 import { API_URL } from "../../../config";
+import OverviewPanel from "../../../components/admin/OverviewPanel";
 import OrdersPanel from "../../../components/admin/OrdersPanel";
 import ProductsPanel from "../../../components/admin/ProductsPanel";
 import SettingsPanel from "../../../components/admin/SettingsPanel";
@@ -22,27 +26,35 @@ import InventoryPanel from "../../../components/admin/InventoryPanel";
 import StoreLinkPanel from "../../../components/admin/StoreLinkPanel";
 import ReportsPanel from "../../../components/admin/ReportsPanel";
 
-type Tab = "pos" | "orders" | "utang" | "products" | "inventory" | "expenses" | "purchases" | "settings" | "storelink" | "vouchers" | "stores" | "customers" | "analytics" | "reports" | "maintenance" | "team" | "warehouses";
-
 interface MyStore { id: string; name: string; slug: string; role: string; }
 
 export default function AdminDashboard() {
   const router = useRouter();
-  const [tab, setTab] = useState<Tab>("orders");
   const [authed, setAuthed] = useState(false);
   const [stores, setStores] = useState<MyStore[]>([]);
   const [activeStore, setActiveStore] = useState<string | null>(null);
+  const [role, setRole] = useState("");
+  const [email, setEmail] = useState("");
+  const [tab, setTab] = useState("overview");
+  const [mobileNav, setMobileNav] = useState(false);
 
   useEffect(() => {
-    if (!getAdminToken()) {
+    const token = getAdminToken();
+    if (!token) {
       router.replace("/admin/login");
       return;
     }
+    const r = getAdminRole();
+    setRole(r);
+    setTab(defaultTabFor(r));
     setAuthed(true);
     setActiveStore(getAdminStoreId());
-    // Load the user's stores for the switcher.
+    fetch(`${API_URL}/admin/me`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((d) => d && setEmail(d.email ?? ""))
+      .catch(() => {});
     fetch(`${API_URL}/admin/stores/mine`, {
-      headers: { Authorization: `Bearer ${getAdminToken()}` },
+      headers: { Authorization: `Bearer ${token}` },
     })
       .then((r) => r.json())
       .then((data) => {
@@ -58,8 +70,7 @@ export default function AdminDashboard() {
   const switchStore = (storeId: string) => {
     setAdminStoreId(storeId);
     setActiveStore(storeId);
-    // force panels to reload: bump a key would require prop wiring; simplest is a hard remount via key
-    window.location.reload();
+    // Panels refetch on remount via the key below — no full page reload.
   };
 
   const logout = () => {
@@ -69,86 +80,138 @@ export default function AdminDashboard() {
   };
 
   if (!authed) return null;
-  const activeName = stores.find((s) => s.id === activeStore)?.name;
+  const active = stores.find((s) => s.id === activeStore);
+  const allowed = allowedTabs(role);
+  const visibleGroups = NAV_GROUPS
+    .map((g) => ({ ...g, items: g.items.filter((i) => allowed.includes(i.id)) }))
+    .filter((g) => g.items.length > 0);
 
-  return (
-    <div key={activeStore ?? "none"}>
-      <nav className="navbar navbar-dark bg-dark">
-        <div className="container">
-          <span className="navbar-brand fw-semibold">
-            <i className="bi bi-speedometer2 me-2"></i>Sam&apos;s Admin
-          </span>
-          <div className="d-flex align-items-center gap-2 flex-wrap">
-            {stores.length > 0 && (
-              <select
-                className="form-select form-select-sm"
-                style={{ width: 180 }}
-                value={activeStore ?? ""}
-                onChange={(e) => e.target.value && switchStore(e.target.value)}
-              >
-                {stores.map((s) => (
-                  <option key={s.id} value={s.id}>{s.name} ({s.role})</option>
-                ))}
-              </select>
-            )}
-            <ul className="nav nav-pills">
-              {(["pos", "orders", "utang", "products", "inventory", "expenses", "purchases", "team", "customers", "analytics", "reports", "vouchers", "settings", "storelink", "warehouses", "stores", "maintenance"] as Tab[]).map((t) => (
-                <li className="nav-item" key={t}>
+  const renderTab = () => {
+    switch (tab) {
+      case "overview": return <OverviewPanel onNavigate={setTab} storeSlug={active?.slug} storeName={active?.name} />;
+      case "pos": return <PosPanel />;
+      case "utang": return <UtangPanel />;
+      case "inventory": return <InventoryPanel />;
+      case "expenses": return <ExpensesPanel />;
+      case "purchases": return <PurchasesPanel />;
+      case "storelink": return <StoreLinkPanel />;
+      case "reports": return <ReportsPanel />;
+      case "orders": return <OrdersPanel />;
+      case "products": return <ProductsPanel />;
+      case "settings": return <SettingsPanel />;
+      case "vouchers": return <VouchersPanel />;
+      case "team": return <TeamPanel />;
+      case "customers": return <CustomersPanel />;
+      case "analytics": return <AnalyticsPanel />;
+      case "maintenance": return <MaintenancePanel />;
+      case "warehouses": return <WarehousesPanel />;
+      case "stores": return <StoresPanel />;
+      default: return <OrdersPanel />;
+    }
+  };
+
+  const sidebar = (
+    <div className="d-flex flex-column h-100">
+      <div className="p-3 border-bottom">
+        <div className="fw-bold h6 mb-0">
+          <i className="bi bi-shop me-2 text-primary"></i>
+          {active?.name ?? "Store Admin"}
+        </div>
+        {active && <small className="text-muted">{active.slug}</small>}
+      </div>
+      <nav className="flex-grow-1 overflow-auto py-2">
+        {visibleGroups.map((g) => (
+          <div key={g.group} className="mb-2">
+            <div className="px-3 small text-uppercase text-muted fw-semibold">{g.label}</div>
+            <ul className="nav flex-column">
+              {g.items.map((item) => (
+                <li className="nav-item" key={item.id}>
                   <button
-                    className={`nav-link text-capitalize ${tab === t ? "active bg-primary" : "text-light"}`}
-                    onClick={() => setTab(t)}
+                    className={`nav-link w-100 text-start d-flex align-items-center gap-2 ${tab === item.id ? "active bg-primary text-white" : "text-body"}`}
+                    onClick={() => { setTab(item.id); setMobileNav(false); }}
                   >
-                    {t}
+                    <i className={`bi ${item.icon}`}></i>
+                    <span>{item.label}</span>
                   </button>
                 </li>
               ))}
             </ul>
-            <button className="btn btn-outline-light btn-sm" onClick={logout}>
-              <i className="bi bi-box-arrow-right me-1"></i>Log out
-            </button>
           </div>
-        </div>
+        ))}
       </nav>
-      <main className="container py-4">
-        {activeName && (() => {
-    const active = stores.find((s) => s.id === activeStore);
-    const slug = active?.slug ?? "sam-store";
-    const link = `/${slug}`;
-    return (
-      <div className="alert alert-light border small py-2 d-flex justify-content-between align-items-center flex-wrap">
-        <span><i className="bi bi-shop me-1"></i>Managing: <strong>{activeName}</strong></span>
-        <span className="d-flex align-items-center gap-2">
-          <code className="text-primary">{link}</code>
-          <a className="btn btn-sm btn-outline-primary py-0" href={link} target="_blank" rel="noreferrer">open</a>
-          <button
-            className="btn btn-sm btn-outline-secondary py-0"
-            onClick={() => { navigator.clipboard?.writeText(`${window.location.origin}${link}`); }}
-            title="Copy link"
-          >
-            <i className="bi bi-clipboard"></i>
-          </button>
-        </span>
+      <div className="p-3 border-top">
+        <div className="small fw-semibold">{email || "Admin"}</div>
+        <div className="small text-muted mb-2">{role} · {active?.name}</div>
+        <button className="btn btn-outline-danger btn-sm w-100" onClick={logout}>
+          <i className="bi bi-box-arrow-right me-1"></i>Log out
+        </button>
       </div>
-    );
-  })()}
-        {tab === "pos" && <PosPanel />}
-        {tab === "utang" && <UtangPanel />}
-        {tab === "inventory" && <InventoryPanel />}
-        {tab === "expenses" && <ExpensesPanel />}
-        {tab === "purchases" && <PurchasesPanel />}
-        {tab === "storelink" && <StoreLinkPanel />}
-        {tab === "reports" && <ReportsPanel />}
-        {tab === "orders" && <OrdersPanel />}
-        {tab === "products" && <ProductsPanel />}
-        {tab === "settings" && <SettingsPanel />}
-        {tab === "vouchers" && <VouchersPanel />}
-        {tab === "team" && <TeamPanel />}
-        {tab === "customers" && <CustomersPanel />}
-        {tab === "analytics" && <AnalyticsPanel />}
-        {tab === "maintenance" && <MaintenancePanel />}
-        {tab === "warehouses" && <WarehousesPanel />}
-        {tab === "stores" && <StoresPanel />}
-      </main>
+    </div>
+  );
+
+  return (
+    <div key={activeStore ?? "none"} className="d-flex min-vh-100">
+      {/* Desktop sidebar */}
+      <aside className="d-none d-md-flex flex-column border-end bg-white" style={{ width: 240, position: "sticky", top: 0, height: "100vh" }}>
+        {sidebar}
+      </aside>
+
+      {/* Mobile drawer */}
+      {mobileNav && (
+        <>
+          <div className="modal fade show d-block d-md-none" tabIndex={-1}>
+            <div className="modal-dialog modal-dialog-scrollable" style={{ maxWidth: 280, margin: 0 }}>
+              <div className="modal-content rounded-0 border-end min-vh-100" style={{ minHeight: "100vh" }}>
+                {sidebar}
+              </div>
+            </div>
+          </div>
+          <div className="modal-backdrop fade show d-md-none" onClick={() => setMobileNav(false)}></div>
+        </>
+      )}
+
+      {/* Main */}
+      <div className="flex-grow-1 d-flex flex-column" style={{ minWidth: 0 }}>
+        {/* Topbar */}
+        <nav className="navbar navbar-expand bg-white border-bottom py-2">
+          <div className="container-fluid">
+            <button className="btn btn-outline-secondary btn-sm d-md-none me-2" onClick={() => setMobileNav(true)}>
+              <i className="bi bi-list"></i>
+            </button>
+            <span className="navbar-brand fw-semibold fs-6 mb-0 d-flex align-items-center gap-2">
+              {role === "DELIVERY" ? <i className="bi bi-truck"></i> : <i className="bi bi-speedometer2"></i>}
+              {role === "DELIVERY" ? "Courier" : "Dashboard"}
+            </span>
+            <div className="ms-auto d-flex align-items-center gap-2">
+              {stores.length > 1 && (
+                <select
+                  className="form-select form-select-sm"
+                  style={{ width: 190 }}
+                  value={activeStore ?? ""}
+                  onChange={(e) => e.target.value && switchStore(e.target.value)}
+                >
+                  {stores.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name} ({s.role})</option>
+                  ))}
+                </select>
+              )}
+              <span className="badge text-bg-primary text-uppercase">{role}</span>
+              {active && (
+                <a className="btn btn-sm btn-outline-primary" href={`/${active.slug}`} target="_blank" rel="noreferrer" title="Open storefront">
+                  <i className="bi bi-box-arrow-up-right"></i>
+                </a>
+              )}
+              <button className="btn btn-sm btn-outline-secondary d-md-none" onClick={logout} title="Log out">
+                <i className="bi bi-box-arrow-right"></i>
+              </button>
+            </div>
+          </div>
+        </nav>
+
+        <main className="container-fluid py-4 flex-grow-1" style={{ background: "#faf7f2" }}>
+          {renderTab()}
+        </main>
+      </div>
     </div>
   );
 }

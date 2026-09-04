@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { API_URL } from "../../config";
-import { adminHeaders, type AdminOrder } from "../../lib/admin";
+import { adminHeaders, type AdminOrder, getAdminRole, roleCan } from "../../lib/admin";
 import ReceiptModal from "./ReceiptModal";
 
 const ALLOWED: Record<string, string[]> = {
@@ -30,6 +30,9 @@ const STATUS_BADGE: Record<string, string> = {
 };
 
 export default function OrdersPanel() {
+  const role = getAdminRole();
+  const canVoidRefund = roleCan(role, "voidRefund");
+  const canWrite = roleCan(role, "write");
   const [orders, setOrders] = useState<AdminOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -147,7 +150,7 @@ export default function OrdersPanel() {
                     <span className={`badge ${STATUS_BADGE[o.status] ?? "text-bg-secondary"}`}>{o.status}</span>
                   </td>
                   <td>
-                    {next.length > 0 ? (
+                                      {canWrite && next.length > 0 ? (
                       <select
                         className="form-select form-select-sm"
                         style={{ width: 160 }}
@@ -161,15 +164,17 @@ export default function OrdersPanel() {
                         ))}
                       </select>
                     ) : (
-                      <span className="text-muted small">terminal</span>
+                      <span className="text-muted small">{canWrite ? "terminal" : "view only"}</span>
                     )}
                   </td>
                   <td className="text-muted small">{new Date(o.createdAt).toLocaleString()}</td>
                   <td className="text-end">
-                    <button className="btn btn-sm btn-outline-secondary me-1" title="Receipt" onClick={() => setReceiptOrder(o.id)}>
-                      <i className="bi bi-receipt"></i>
-                    </button>
-                    {o.status === "COMPLETED" && (
+                    {canWrite && (
+                                        <button className="btn btn-sm btn-outline-secondary me-1" title="Receipt" onClick={() => setReceiptOrder(o.id)}>
+                                          <i className="bi bi-receipt"></i>
+                                        </button>
+                                      )}
+                                      {canVoidRefund && o.status === "COMPLETED" && (
                       <button
                         className="btn btn-sm btn-outline-danger"
                         title="Void/Refund"

@@ -38,6 +38,122 @@ export function getAdminToken(): string | null {
   return sessionStorage.getItem("samstore.admin.token");
 }
 
+/** Decodes the role claim from the stored admin JWT (best-effort). */
+export function getAdminRole(): string {
+  const token = getAdminToken();
+  if (!token) return "";
+  try {
+    const parts = token.split(".");
+    if (parts.length < 2) return "";
+    const payloadPart = parts[1] ?? "";
+    if (!payloadPart) return "";
+    const payload = JSON.parse(atob(payloadPart.replace(/-/g, "+").replace(/_/g, "/")));
+    return payload.role ?? "";
+  } catch {
+    return "";
+  }
+}
+
+// ─────────────────────────────── Role-scoped navigation (U1/U2) ───────────────────────────────
+// Truth source: LIVE permission probes against the API per role (2026-09-04). Do not guess.
+
+export interface NavItem {
+  id: string;
+  label: string;
+  icon: string;
+}
+
+export interface NavGroup {
+  group: string;
+  label: string;
+  items: NavItem[];
+}
+
+export const NAV_GROUPS: NavGroup[] = [
+  {
+    group: "overview",
+    label: "Overview",
+    items: [
+      { id: "overview", label: "Overview", icon: "bi-speedometer2" },
+    ],
+  },
+  {
+    group: "sell",
+    label: "Sell",
+    items: [
+      { id: "pos", label: "POS", icon: "bi-cash-register" },
+    ],
+  },
+  {
+    group: "manage",
+    label: "Manage",
+    items: [
+      { id: "orders", label: "Orders", icon: "bi-receipt" },
+      { id: "utang", label: "Utang", icon: "bi-journal-text" },
+      { id: "products", label: "Products", icon: "bi-box-seam" },
+      { id: "inventory", label: "Inventory", icon: "bi-boxes" },
+      { id: "expenses", label: "Expenses", icon: "bi-receipt-cutoff" },
+      { id: "purchases", label: "Purchases", icon: "bi-cart4" },
+      { id: "team", label: "Team", icon: "bi-people" },
+      { id: "customers", label: "Customers", icon: "bi-people-fill" },
+      { id: "vouchers", label: "Vouchers", icon: "bi-ticket-perforated" },
+    ],
+  },
+  {
+    group: "store",
+    label: "Store",
+    items: [
+      { id: "analytics", label: "Analytics", icon: "bi-graph-up-arrow" },
+      { id: "reports", label: "Reports", icon: "bi-file-bar-graph" },
+      { id: "settings", label: "Settings", icon: "bi-gear" },
+      { id: "storelink", label: "Store Link", icon: "bi-link-45deg" },
+    ],
+  },
+  {
+    group: "system",
+    label: "System",
+    items: [
+      { id: "warehouses", label: "Warehouses", icon: "bi-archive" },
+      { id: "stores", label: "Stores", icon: "bi-shop-window" },
+      { id: "maintenance", label: "Maintenance", icon: "bi-tools" },
+    ],
+  },
+];
+
+/** Tab visibility per staff role (GET-level permissions from live API probes). */
+export const TABS_BY_ROLE: Record<string, string[]> = {
+  STORE_OWNER: ["overview", "pos", "orders", "utang", "products", "inventory", "expenses", "purchases", "team", "customers", "vouchers", "analytics", "reports", "settings", "storelink", "warehouses", "stores", "maintenance"],
+  PLATFORM_ADMIN: ["overview", "pos", "orders", "utang", "products", "inventory", "expenses", "purchases", "team", "customers", "vouchers", "analytics", "reports", "settings", "storelink", "warehouses", "stores", "maintenance"],
+  MANAGER: ["overview", "pos", "orders", "utang", "products", "inventory", "expenses", "purchases", "team", "customers", "vouchers", "analytics", "reports", "settings", "warehouses", "maintenance"],
+  STAFF: ["overview", "pos", "orders", "utang", "products", "inventory", "expenses", "purchases", "team", "customers", "vouchers", "analytics", "reports", "settings", "warehouses", "maintenance"],
+  SALES_AGENT: ["orders", "team", "reports"],
+  DELIVERY: [],
+};
+
+/** Write-level permissions (from live write probes). */
+export function roleCan(role: string, action: "manageTeam" | "manageLink" | "voidRefund" | "write" | "profit"): boolean {
+  switch (action) {
+    case "manageTeam": return role === "STORE_OWNER" || role === "PLATFORM_ADMIN";
+    case "manageLink": return role === "STORE_OWNER" || role === "PLATFORM_ADMIN";
+    case "voidRefund": return role === "STORE_OWNER" || role === "PLATFORM_ADMIN" || role === "MANAGER";
+    case "profit": return role === "STORE_OWNER" || role === "PLATFORM_ADMIN" || role === "MANAGER";
+    case "write": return role === "STORE_OWNER" || role === "PLATFORM_ADMIN" || role === "MANAGER" || role === "STAFF";
+    default: return false;
+  }
+}
+
+/** Default landing tab per role. */
+export function defaultTabFor(role: string): string {
+  const tabs = TABS_BY_ROLE[role] ?? [];
+  if (tabs.length === 0) return "orders";
+  if (tabs.includes("overview")) return "overview";
+  return tabs[0] ?? "orders";
+}
+
+export function allowedTabs(role: string): string[] {
+  return TABS_BY_ROLE[role] ?? [];
+}
+
 /** Fetches orders for the admin dashboard (demo: reads from API; auth via token). */
 export async function fetchAdminOrders(token: string): Promise<AdminOrder[]> {
   const res = await fetch(`${API_URL}/admin/orders`, {
