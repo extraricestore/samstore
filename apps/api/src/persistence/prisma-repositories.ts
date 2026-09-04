@@ -52,6 +52,9 @@ export class PrismaStoreRepository implements StoreRepository {
       deliveryEnabled: settings?.deliveryEnabled ?? true,
       pickupEnabled: settings?.pickupEnabled ?? false,
       minOrderAmountMinor: settings?.minOrderAmountMinor ?? 0,
+      accentColor: s.accentColor,
+      bannerText: s.bannerText,
+      logoUrl: s.logoUrl,
     };
   }
 

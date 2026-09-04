@@ -124,7 +124,10 @@ model Store {
   slug         String      @unique
   name         String
   description  String?
-  logoUrl      String?
+  logoUrl      String? // image URL or small base64 (P8 allows base64/null)
+  accentColor  String?     @default("#d94f2b") // P8: storefront accent
+  bannerText   String? // P8: storefront banner message
+  shareMessage String? // P8: default share text
   currencyCode String      @default("PHP") // operator decision 2026-09-01: Philippines → PHP
   timezone     String      @default("Asia/Manila") // operator decision 2026-09-01
   status       StoreStatus @default(ACTIVE)

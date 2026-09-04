@@ -49,6 +49,9 @@ export class PublicStoreController {
         deliveryEnabled: store.deliveryEnabled,
         pickupEnabled: store.pickupEnabled,
         minOrderAmountMinor: store.minOrderAmountMinor,
+        accentColor: store.accentColor,
+        bannerText: store.bannerText,
+        logoUrl: store.logoUrl,
       },
       products: products.map((p) => ({
         id: p.id,

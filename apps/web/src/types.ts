@@ -32,6 +32,8 @@ export interface PublicStoreDTO {
   deliveryEnabled: boolean;
   pickupEnabled: boolean;
   minOrderAmountMinor: number;
+  accentColor?: string | null;
+  bannerText?: string | null;
 }
 
 export interface CartLineDTO {

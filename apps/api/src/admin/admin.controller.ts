@@ -326,6 +326,21 @@ export class AdminController {
     return { ...result.value, storeId };
   }
 
+  /** PATCH /admin/store-link — update store link branding (P8). */
+  @Patch("store-link")
+  async updateStoreLink(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Body() body: { accentColor?: string; bannerText?: string | null; shareMessage?: string | null; logoUrl?: string | null },
+    @Headers("x-store-id") headerStoreId?: string,
+  ) {
+    const user = req.user;
+    requireManage(user);
+    const storeId = await this.resolveStoreId(user, headerStoreId);
+    const result = await this.settingsAdmin.updateLink(storeId, body);
+    if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+    return { ...result.value, storeId };
+  }
+
   /** GET /admin/vouchers — list store vouchers with redemption counts. */
   @Get("vouchers")
   async listVouchers(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {

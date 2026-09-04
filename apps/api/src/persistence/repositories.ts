@@ -17,6 +17,9 @@ export interface StoreRecord {
   deliveryEnabled: boolean;
   pickupEnabled: boolean;
   minOrderAmountMinor: number;
+  accentColor?: string | null;
+  bannerText?: string | null;
+  logoUrl?: string | null;
 }
 
 export interface ProductRecord {

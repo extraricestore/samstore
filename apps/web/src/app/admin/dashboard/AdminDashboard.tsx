@@ -19,8 +19,9 @@ import UtangPanel from "../../../components/admin/UtangPanel";
 import ExpensesPanel from "../../../components/admin/ExpensesPanel";
 import PurchasesPanel from "../../../components/admin/PurchasesPanel";
 import InventoryPanel from "../../../components/admin/InventoryPanel";
+import StoreLinkPanel from "../../../components/admin/StoreLinkPanel";
 
-type Tab = "pos" | "orders" | "utang" | "products" | "inventory" | "expenses" | "purchases" | "settings" | "vouchers" | "stores" | "customers" | "analytics" | "maintenance" | "team" | "warehouses";
+type Tab = "pos" | "orders" | "utang" | "products" | "inventory" | "expenses" | "purchases" | "settings" | "storelink" | "vouchers" | "stores" | "customers" | "analytics" | "maintenance" | "team" | "warehouses";
 
 interface MyStore { id: string; name: string; slug: string; role: string; }
 
@@ -90,7 +91,7 @@ export default function AdminDashboard() {
               </select>
             )}
             <ul className="nav nav-pills">
-              {(["pos", "orders", "utang", "products", "inventory", "expenses", "purchases", "team", "customers", "analytics", "vouchers", "settings", "warehouses", "stores", "maintenance"] as Tab[]).map((t) => (
+              {(["pos", "orders", "utang", "products", "inventory", "expenses", "purchases", "team", "customers", "analytics", "vouchers", "settings", "storelink", "warehouses", "stores", "maintenance"] as Tab[]).map((t) => (
                 <li className="nav-item" key={t}>
                   <button
                     className={`nav-link text-capitalize ${tab === t ? "active bg-primary" : "text-light"}`}
@@ -108,17 +109,33 @@ export default function AdminDashboard() {
         </div>
       </nav>
       <main className="container py-4">
-        {activeName && (
-          <div className="alert alert-light border small py-2 d-flex justify-content-between align-items-center">
-            <span><i className="bi bi-shop me-1"></i>Managing: <strong>{activeName}</strong></span>
-            <a className="small" href="/sam-store" target="_blank" rel="noreferrer">view storefront</a>
-          </div>
-        )}
+        {activeName && (() => {
+    const active = stores.find((s) => s.id === activeStore);
+    const slug = active?.slug ?? "sam-store";
+    const link = `/${slug}`;
+    return (
+      <div className="alert alert-light border small py-2 d-flex justify-content-between align-items-center flex-wrap">
+        <span><i className="bi bi-shop me-1"></i>Managing: <strong>{activeName}</strong></span>
+        <span className="d-flex align-items-center gap-2">
+          <code className="text-primary">{link}</code>
+          <a className="btn btn-sm btn-outline-primary py-0" href={link} target="_blank" rel="noreferrer">open</a>
+          <button
+            className="btn btn-sm btn-outline-secondary py-0"
+            onClick={() => { navigator.clipboard?.writeText(`${window.location.origin}${link}`); }}
+            title="Copy link"
+          >
+            <i className="bi bi-clipboard"></i>
+          </button>
+        </span>
+      </div>
+    );
+  })()}
         {tab === "pos" && <PosPanel />}
         {tab === "utang" && <UtangPanel />}
         {tab === "inventory" && <InventoryPanel />}
         {tab === "expenses" && <ExpensesPanel />}
         {tab === "purchases" && <PurchasesPanel />}
+        {tab === "storelink" && <StoreLinkPanel />}
         {tab === "orders" && <OrdersPanel />}
         {tab === "products" && <ProductsPanel />}
         {tab === "settings" && <SettingsPanel />}

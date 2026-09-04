@@ -114,6 +114,16 @@ export default function Storefront({ store, products }: StorefrontProps) {
 
   return (
     <div className="storefront">
+      {/* Per-store branding (P8): accent color scoped to this page */}
+      <style>{`
+        .storefront { --sam-primary: ${store.accentColor ?? "#d94f2b"}; }
+        .storefront .btn-primary { background-color: var(--sam-primary); border-color: var(--sam-primary); }
+      `}</style>
+      {store.bannerText && (
+        <div className="text-center py-2 fw-semibold small text-white" style={{ background: store.accentColor ?? "#d94f2b" }}>
+          {store.bannerText}
+        </div>
+      )}
       {/* Navbar */}
       <nav className="navbar navbar-dark bg-dark sticky-top">
         <div className="container">

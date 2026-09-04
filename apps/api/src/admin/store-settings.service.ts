@@ -33,6 +33,10 @@ export class StoreSettingsService {
       timezone: store.timezone,
       status: store.status,
       publicLink: store.publicLink,
+      accentColor: store.accentColor,
+      bannerText: store.bannerText,
+      shareMessage: store.shareMessage,
+      logoUrl: store.logoUrl,
       settings: {
         allowGuestOrders: store.settings?.allowGuestOrders ?? true,
         orderingPaused: store.settings?.orderingPaused ?? false,
@@ -86,6 +90,25 @@ export class StoreSettingsService {
         pickupEnabled: input.pickupEnabled ?? false,
         orderCutoff: input.orderCutoff ?? null,
         maxOpenOrdersPerCustomer: input.maxOpenOrdersPerCustomer ?? 10,
+      },
+    });
+    return { ok: true, value: { id: storeId } };
+  }
+
+  /** P8 — store link branding: accent color, banner text, share message, logo. */
+  async updateLink(storeId: string, input: { accentColor?: string; bannerText?: string | null; shareMessage?: string | null; logoUrl?: string | null }): Promise<AdminResult<{ id: string }>> {
+    const store = await prisma.store.findUnique({ where: { id: storeId } });
+    if (!store) return { ok: false, error: { type: "not_found", message: "Store not found" } };
+    if (input.accentColor !== undefined && !/^#[0-9a-fA-F]{6}$/.test(input.accentColor)) {
+      return { ok: false, error: { type: "validation", errors: ["accentColor must be a hex color (#rrggbb)"] } };
+    }
+    await prisma.store.update({
+      where: { id: storeId },
+      data: {
+        ...(input.accentColor !== undefined ? { accentColor: input.accentColor } : {}),
+        ...(input.bannerText !== undefined ? { bannerText: input.bannerText } : {}),
+        ...(input.shareMessage !== undefined ? { shareMessage: input.shareMessage } : {}),
+        ...(input.logoUrl !== undefined ? { logoUrl: input.logoUrl } : {}),
       },
     });
     return { ok: true, value: { id: storeId } };
