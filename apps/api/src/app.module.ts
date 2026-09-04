@@ -28,6 +28,8 @@ import { ExpensesService, EXPENSES_SERVICE } from "./expenses/expenses.service.j
 import { ExpensesController } from "./expenses/expenses.controller.js";
 import { PurchasesService, PURCHASES_SERVICE } from "./purchases/purchases.service.js";
 import { PurchasesController } from "./purchases/purchases.controller.js";
+import { InventoryService, INVENTORY_SERVICE } from "./inventory/inventory.service.js";
+import { InventoryController } from "./inventory/inventory.controller.js";
 import { verifyToken } from "./auth/auth.domain.js";
 import {
   PrismaStoreRepository,
@@ -40,8 +42,12 @@ import {
 const CLAIM_SECRET = process.env.CLAIM_SIGNING_SECRET ?? "dev-only-in-memory-secret-0123456789";
 
 @Module({
-  controllers: [CheckoutController, PublicStoreController, CartController, AuthController, AdminController, OrderLookupController, CustomerAuthController, PosController, PaymentsController, CreditController, ExpensesController, PurchasesController],
+  controllers: [CheckoutController, PublicStoreController, CartController, AuthController, AdminController, OrderLookupController, CustomerAuthController, PosController, PaymentsController, CreditController, ExpensesController, PurchasesController, InventoryController],
   providers: [
+    {
+      provide: INVENTORY_SERVICE,
+      useFactory: () => new InventoryService(),
+    },
     {
       provide: EXPENSES_SERVICE,
       useFactory: () => new ExpensesService(),
