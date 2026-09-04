@@ -37,6 +37,13 @@ export default function ProductsPanel() {
   const [modal, setModal] = useState<{ open: boolean; editing: AdminProduct | null }>({ open: false, editing: null });
   const [form, setForm] = useState<ProductForm>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  // P7 filters
+  const [search, setSearch] = useState("");
+  const [categoryId, setCategoryId] = useState("");
+  const [minPrice, setMinPrice] = useState("");
+  const [maxPrice, setMaxPrice] = useState("");
+  const [active, setActive] = useState("");
+  const [sort, setSort] = useState<"created" | "name" | "price" | "stock">("created");
 
   const token = () => getAdminToken();
 
@@ -44,23 +51,33 @@ export default function ProductsPanel() {
     setLoading(true);
     setError(null);
     try {
+      const q = new URLSearchParams();
+      if (search) q.set("search", search);
+      if (categoryId) q.set("categoryId", categoryId);
+      if (minPrice) q.set("minPrice", minPrice);
+      if (maxPrice) q.set("maxPrice", maxPrice);
+      if (active) q.set("active", active);
       const [pRes, cRes] = await Promise.all([
-        fetch(`${API_URL}/admin/products`, { headers: adminHeaders() }),
+        fetch(`${API_URL}/admin/products?${q.toString()}`, { headers: adminHeaders() }),
                 fetch(`${API_URL}/admin/products/categories`, { headers: adminHeaders() }),
       ]);
       if (!pRes.ok) throw new Error("Failed to load products");
       const p = await pRes.json();
       const c = await cRes.json();
-      setProducts(p.products);
+      let rows: AdminProduct[] = p.products;
+      if (sort === "name") rows = [...rows].sort((a, b) => a.name.localeCompare(b.name));
+      else if (sort === "price") rows = [...rows].sort((a, b) => a.priceMinor - b.priceMinor);
+      else if (sort === "stock") rows = [...rows].sort((a, b) => b.availableQuantity - a.availableQuantity);
+      setProducts(rows);
       setCategories(c.categories);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Load failed");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [search, categoryId, minPrice, maxPrice, active, sort]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { const t = setTimeout(load, 250); return () => clearTimeout(t); }, [load]);
 
   const openCreate = () => {
     setForm(EMPTY_FORM);
@@ -135,7 +152,40 @@ export default function ProductsPanel() {
         </button>
       </div>
       {error && <div className="alert alert-danger py-2 small">{error}</div>}
-      {loading ? (
+
+            {/* P7 filter bar */}
+            <div className="row g-2 mb-3">
+              <div className="col-md-3">
+                <input className="form-control form-control-sm" placeholder="Search name / SKU (jump)…" value={search} onChange={(e) => setSearch(e.target.value)} />
+              </div>
+              <div className="col-md-2">
+                <select className="form-select form-select-sm" value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
+                  <option value="">All categories</option>
+                  {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+              <div className="col-md-2 d-flex gap-1">
+                <input className="form-control form-control-sm" type="number" min="0" step="0.01" placeholder="Min ₱" value={minPrice} onChange={(e) => setMinPrice(e.target.value)} />
+                <input className="form-control form-control-sm" type="number" min="0" step="0.01" placeholder="Max ₱" value={maxPrice} onChange={(e) => setMaxPrice(e.target.value)} />
+              </div>
+              <div className="col-md-2">
+                <select className="form-select form-select-sm" value={active} onChange={(e) => setActive(e.target.value)}>
+                  <option value="">All status</option>
+                  <option value="true">Active</option>
+                  <option value="false">Inactive</option>
+                </select>
+              </div>
+              <div className="col-md-3">
+                <select className="form-select form-select-sm" value={sort} onChange={(e) => setSort(e.target.value as "created" | "name" | "price" | "stock")}>
+                  <option value="created">Sort: newest</option>
+                  <option value="name">Sort: name</option>
+                  <option value="price">Sort: price</option>
+                  <option value="stock">Sort: stock</option>
+                </select>
+              </div>
+            </div>
+
+            {loading ? (
         <p className="text-muted">Loading…</p>
       ) : products.length === 0 ? (
         <p className="text-muted">No products yet. Create your first one!</p>

@@ -9,8 +9,27 @@ export type AdminResult<T> = { ok: true; value: T } | { ok: false; error: ApiErr
 export class ProductAdminService {
   /** List products for a store (with stock + category). */
   async list(storeId: string) {
+    return this.listFiltered(storeId, {});
+  }
+
+  /** List with filters: search (name/SKU), category, price range, active status. */
+  async listFiltered(storeId: string, f: { search?: string; categoryId?: string; minPriceMinor?: number; maxPriceMinor?: number; active?: boolean }) {
+    const where: Record<string, unknown> = { storeId };
+    if (f.search) {
+      where.OR = [
+        { name: { contains: f.search, mode: "insensitive" } },
+        { sku: { contains: f.search, mode: "insensitive" } },
+      ];
+    }
+    if (f.categoryId) where.categoryId = f.categoryId;
+    if (f.minPriceMinor !== undefined || f.maxPriceMinor !== undefined) {
+      where.priceMinor = {};
+      if (f.minPriceMinor !== undefined) (where.priceMinor as Record<string, unknown>).gte = f.minPriceMinor;
+      if (f.maxPriceMinor !== undefined) (where.priceMinor as Record<string, unknown>).lte = f.maxPriceMinor;
+    }
+    if (f.active !== undefined) where.isActive = f.active;
     const products = await prisma.product.findMany({
-      where: { storeId },
+      where,
       orderBy: { createdAt: "asc" },
       include: {
         category: { select: { id: true, name: true, slug: true } },

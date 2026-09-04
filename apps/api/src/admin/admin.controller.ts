@@ -10,6 +10,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
   UseGuards,
 } from "@nestjs/common";
@@ -220,13 +221,28 @@ export class AdminController {
     return { ...result.value, storeId };
   }
 
-  /** GET /admin/products — tenant-scoped product list with stock. */
+  /** GET /admin/products — tenant-scoped product list with stock. Filters: search, categoryId, minPrice, maxPrice, active. */
   @Get("products")
-  async listProducts(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
+  async listProducts(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Query("search") search?: string,
+    @Query("categoryId") categoryId?: string,
+    @Query("minPrice") minPrice?: string,
+    @Query("maxPrice") maxPrice?: string,
+    @Query("active") active?: string,
+    @Headers("x-store-id") headerStoreId?: string,
+  ) {
     const user = req.user;
     requireAdmin(user);
     const storeId = await this.resolveStoreId(user, headerStoreId);
-    return { products: await this.productsAdmin.list(storeId), storeId };
+    const items = await this.productsAdmin.listFiltered(storeId, {
+      search,
+      categoryId,
+      minPriceMinor: minPrice ? Math.round(parseFloat(minPrice) * 100) : undefined,
+      maxPriceMinor: maxPrice ? Math.round(parseFloat(maxPrice) * 100) : undefined,
+      active: active === undefined ? undefined : active === "true",
+    });
+    return { products: items, storeId };
   }
 
   /** GET /admin/products/categories — store categories. */
