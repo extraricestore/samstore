@@ -78,7 +78,7 @@ const CLAIM_SECRET = process.env.CLAIM_SIGNING_SECRET ?? "dev-only-in-memory-sec
     },
     {
       provide: POS_SERVICE,
-      useFactory: () => new PosService(),
+      useFactory: () => new PosService(new LoyaltyService()),
     },
     {
       provide: CUSTOMER_AUTH_SERVICE,

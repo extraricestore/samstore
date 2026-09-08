@@ -444,6 +444,7 @@ model PurchaseItem {
 enum LoyaltyEntryType {
   EARN
   REDEEM
+  ADJUST // admin manual points adjust (+/-) with note
 }
 
 model LoyaltyEntry {
@@ -522,6 +523,8 @@ model Order {
   cartToken            String // bound for idempotent retries; mismatch on retry is rejected
   customerName         String
   customerPhone        String
+  signatureData        String? // v4: finger-drawn signature (data-URL PNG) captured at utang finalize
+  signatureAt          DateTime? // v4: when the signature was captured
   deliveryAddressLine1 String
   deliveryAddressLine2 String?
   landmark             String?

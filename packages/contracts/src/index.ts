@@ -153,6 +153,10 @@ export interface PosSellRequest {
   /** V1: utang start/due dates (ISO). Defaults: now / start + store creditTermDays */
   startAt?: string;
   dueAt?: string;
+  /** v4: loyalty points to redeem on this sale (credit/customer only, server-validated) */
+  loyaltyPoints?: number;
+  /** v4: REQUIRED for credit sales — finger-drawn signature (data-URL PNG) */
+  signatureData?: string;
 }
 
 export interface PosHoldRequest {
@@ -177,6 +181,10 @@ export interface PosHoldCompleteRequest {
   customerPhone?: string;
   startAt?: string;
   dueAt?: string;
+  /** v4: loyalty points to redeem on this completion (credit/customer only) */
+  loyaltyPoints?: number;
+  /** v4: REQUIRED for credit sales — finger-drawn signature (data-URL PNG) */
+  signatureData?: string;
 }
 
 export interface PosSellResponse {
@@ -188,6 +196,71 @@ export interface PosSellResponse {
   paymentMethod: "cash" | "credit";
   /** V1: change owed (cash) */
   changeMinor?: number;
+  /** v4: loyalty points redeemed on this sale */
+  loyaltyPointsRedeemed?: number;
+}
+
+// ─────────────────────────────── POS Pre-orders (v4) ───────────────────────────────
+
+/** v4: create a pre-order draft — customer REQUIRED, stock reserved (ON_HOLD + source=PRE_ORDER). */
+export interface PreOrderCreateRequest {
+  customerId?: string; // store-customer id, OR quick-create via name/phone below
+  customerName?: string;
+  customerPhone?: string;
+  items: PosSellItem[];
+  /** default now / now + store creditTermDays */
+  startAt?: string;
+  dueAt?: string;
+}
+
+export interface PreOrderCreateResponse {
+  orderId: string;
+  orderNumber: string;
+  status: string;
+  totalMinor: number;
+  currencyCode: string;
+}
+
+/** v4: finalize a pre-order — utang only, signature REQUIRED, order → COMPLETED + CreditEntry. */
+export interface PreOrderFinalizeRequest {
+  /** REQUIRED — finger-drawn signature (data-URL PNG) */
+  signatureData: string;
+  startAt?: string;
+  dueAt?: string;
+}
+
+export interface PreOrderFinalizeResponse {
+  orderId: string;
+  orderNumber: string;
+  status: string;
+  totalMinor: number;
+  currencyCode: string;
+  creditEntryId: string;
+  signatureAt: string;
+}
+
+// ─────────────────────────────── Admin customers / loyalty (v4) ───────────────────────────────
+
+export interface AdminCreateCustomerRequest {
+  name: string;
+  phone?: string;
+  email?: string;
+  /** v4: pre-approve for credit + optional limit (minor) */
+  creditApproved?: boolean;
+  creditLimitMinor?: number;
+}
+
+export interface AdminUpdateCustomerRequest {
+  name?: string;
+  phone?: string;
+  email?: string;
+  creditLimitMinor?: number;
+}
+
+export interface LoyaltyAdjustRequest {
+  /** signed delta (can be negative; balance never below 0) */
+  delta: number;
+  note: string;
 }
 
 // ─────────────────────────────── Orders workflow (W1) ───────────────────────────────
