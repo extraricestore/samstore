@@ -42,7 +42,8 @@ const TABS: { id: string; label: string; status?: string[] }[] = [
   { id: "pending", label: "Pending", status: ["RECEIVED"] },
   { id: "onprocess", label: "On Process", status: ["CONFIRMED", "PREPARING", "READY", "ON_HOLD"] },
   { id: "fordelivery", label: "For Delivery", status: ["OUT_FOR_DELIVERY"] },
-  { id: "completed", label: "Completed", status: ["DELIVERED", "COMPLETED"] },
+  { id: "delivered", label: "Delivered", status: ["DELIVERED"] },
+  { id: "completed", label: "Completed", status: ["COMPLETED"] },
   { id: "void", label: "Void", status: ["CANCELLED", "FAILED_DELIVERY"] },
 ];
 
@@ -72,6 +73,8 @@ export default function OrdersPanel() {
   const [orderDetail, setOrderDetail] = useState<AdminOrder | null>(null);
   const [detailSignature, setDetailSignature] = useState<string | null>(null);
   const [detailItems, setDetailItems] = useState<{ productName: string; quantity: number; lineTotalMinor: number }[] | null>(null);
+  const [detailHistory, setDetailHistory] = useState<{ fromStatus: string | null; toStatus: string; createdAt: string; reason?: string | null; actorType?: string }[] | null>(null);
+  const [detailToken, setDetailToken] = useState<string | null>(null);
   const [counts, setCounts] = useState<Record<string, number>>({});
   // On-process editing
   const [editHold, setEditHold] = useState<{ id: string; orderNumber: string; status: string; lines: EditLine[] } | null>(null);
@@ -102,9 +105,12 @@ export default function OrdersPanel() {
       }
       if (customer.trim()) q.set("customer", customer.trim());
             const res = await fetch(`${API_URL}/admin/orders?${q.toString()}`, { headers: adminHeaders() });
-            if (!res.ok) throw new Error("Failed to load orders");
-            const data = await res.json();
-            setOrders(data.orders ?? []);
+                        if (!res.ok) throw new Error("Failed to load orders");
+                        const data = await res.json();
+                        let list = data.orders ?? [];
+                        // Oldest-first in Pending (FIFO: the longest-waiting order is the most urgent).
+                        if (tab === "pending") list = list.sort((a: AdminOrder, b: AdminOrder) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
+                        setOrders(list);
             // Per-tab counts (for badges) — fire-and-forget, never blocks the list.
             fetch(`${API_URL}/admin/orders/counts`, { headers: adminHeaders() })
               .then((r) => r.json())
@@ -344,6 +350,15 @@ export default function OrdersPanel() {
 
   const isDelivHint = (o: AdminOrder) => (o.deliveryType ?? "delivery") === "delivery";
 
+  /** Age badge — visible on active-status rows (Pending/On Process/For Delivery). >1h amber, >3h red. */
+  const ageOf = (o: AdminOrder): { mins: number; label: string; tone: string } | null => {
+    if (["COMPLETED", "DELIVERED", "CANCELLED", "FAILED_DELIVERY"].includes(o.status)) return null;
+    const mins = Math.max(0, Math.floor((Date.now() - new Date(o.createdAt).getTime()) / 60_000));
+    if (mins < 60) return { mins, label: `${mins}m`, tone: "text-bg-secondary" };
+    if (mins < 180) return { mins, label: `${Math.floor(mins / 60)}h${mins % 60 ? "+" : ""}`, tone: "text-bg-warning" };
+    return { mins, label: `${Math.floor(mins / 60)}h+`, tone: "text-bg-danger" };
+  };
+
     const looking = (o: AdminOrder) => {
         // Friendly, deduped status pill. The raw status is already implied by the active tab;
         // the pill adds the delivery/pickup + payment hints without echoing "RECEIVED" next to "Receive".
@@ -353,30 +368,37 @@ export default function OrdersPanel() {
           COMPLETED: "Completed", CANCELLED: "Cancelled", FAILED_DELIVERY: "Failed delivery",
         };
         const utang = o.paymentMethod === "credit";
-        return (
-          <>
-            <span className={`badge ${STATUS_BADGE[o.status] ?? "text-bg-secondary"} text-capitalize text-nowrap`}>
-              {label[o.status] ?? o.status}
-              {o.status === "RECEIVED" && isDelivHint(o) && <i className="bi bi-geo-alt ms-1"></i>}
-            </span>
-            {utang && <span className="badge text-bg-warning ms-1" title="Charged to utang"><i className="bi bi-journal-text me-1"></i>utang</span>}
-          </>
-        );
-      };
+              const age = ageOf(o);
+              return (
+                <>
+                  <span className={`badge ${STATUS_BADGE[o.status] ?? "text-bg-secondary"} text-capitalize text-nowrap`}>
+                    {label[o.status] ?? o.status}
+                    {o.status === "RECEIVED" && isDelivHint(o) && <i className="bi bi-geo-alt ms-1"></i>}
+                  </span>
+                  {age && <span className={`badge ${age.tone} ms-1`} title={`Placed ${age.mins} min ago`}>{age.label}</span>}
+                  {utang && <span className="badge text-bg-warning ms-1" title="Charged to utang"><i className="bi bi-journal-text me-1"></i>utang</span>}
+                </>
+              );
+            };
 
     /** Opens the Details modal and lazily loads the signature + line items (list endpoint omits them but the detail endpoint returns them). */
         const openDetail = (o: AdminOrder) => {
-          setOrderDetail(o);
-          setDetailSignature(null);
-          setDetailItems(null);
-          fetch(`${API_URL}/admin/orders/${o.id}`, { headers: adminHeaders() })
-            .then((r) => r.json())
-            .then((d) => {
-              setDetailSignature(typeof d?.signatureData === "string" ? (d.signatureData as string) : null);
-              setDetailItems(Array.isArray(d?.items) ? (d.items as { productName: string; quantity: number; lineTotalMinor: number }[]) : []);
-            })
-            .catch(() => setDetailSignature(null));
-        };
+                  setOrderDetail(o);
+                  setDetailSignature(null);
+                  setDetailItems(null);
+                  setDetailHistory(null);
+                  setDetailToken(null);
+                  fetch(`${API_URL}/admin/orders/${o.id}`, { headers: adminHeaders() })
+                    .then((r) => r.json())
+                    .then((d) => {
+                      setDetailSignature(typeof d?.signatureData === "string" ? (d.signatureData as string) : null);
+                      setDetailItems(Array.isArray(d?.items) ? (d.items as { productName: string; quantity: number; lineTotalMinor: number }[]) : []);
+                      setDetailHistory(Array.isArray(d?.statusHistory) ? (d.statusHistory as { fromStatus: string | null; toStatus: string; createdAt: string; reason?: string | null; actorType?: string }[]) : []);
+                      const t = Array.isArray(d?.claimTokens) ? (d.claimTokens as { token: string; usedAt: string | null }[]).find((c) => !c.usedAt)?.token : null;
+                      setDetailToken(t ?? null);
+                    })
+                    .catch(() => setDetailSignature(null));
+                };
 
   const cardGrid = (
     <div className="d-grid gap-2 d-lg-none">
@@ -626,10 +648,23 @@ export default function OrdersPanel() {
             <div className="modal-dialog modal-dialog-centered">
               <div className="modal-content">
                 <div className="modal-header">
-                  <h5 className="modal-title">{orderDetail.orderNumber}</h5>
-                  <button type="button" className="btn-close" onClick={() => setOrderDetail(null)}></button>
-                </div>
-                <div className="modal-body small">
+                                  <h5 className="modal-title">{orderDetail.orderNumber}</h5>
+                                  <button type="button" className="btn-close" onClick={() => setOrderDetail(null)}></button>
+                                </div>
+                                <div className="modal-body small">
+                                                  {/* Contact actions */}
+                                                  {orderDetail.customerPhone && (
+                                                    <div className="d-flex flex-wrap gap-1 mb-2">
+                                                      <a className="btn btn-sm btn-outline-success" href={`tel:${orderDetail.customerPhone}`}><i className="bi bi-telephone me-1"></i>Call</a>
+                                                      <a className="btn btn-sm btn-outline-primary" href={`sms:${orderDetail.customerPhone}`}><i className="bi bi-chat-dots me-1"></i>SMS</a>
+                                                      <a className="btn btn-sm btn-outline-info" href={`https://wa.me/${orderDetail.customerPhone.replace(/\D/g, "")}`} target="_blank" rel="noreferrer"><i className="bi bi-whatsapp me-1"></i>WhatsApp</a>
+                                                      {detailToken && (
+                                                        <button className="btn btn-sm btn-outline-secondary" title="Copy tracking token" onClick={() => { navigator.clipboard?.writeText(detailToken); toast("Tracking token copied"); }}>
+                                                          <i className="bi bi-clipboard me-1"></i>Copy tracking
+                                                        </button>
+                                                      )}
+                                                    </div>
+                                                  )}
                                   <dl className="row mb-2">
                                     <dt className="col-5">Customer</dt><dd className="col-7">{orderDetail.customerName}</dd>
                                     <dt className="col-5">Phone</dt><dd className="col-7">{orderDetail.customerPhone || "—"}</dd>
@@ -660,8 +695,24 @@ export default function OrdersPanel() {
                                                                           </table>
                                                                         )}
                                                                       </div>
-                                                                    )}
-                                                                    {orderDetail.paymentMethod === "credit" && (
+                                                                                                        )}
+                                                                                                        {detailHistory && detailHistory.length > 0 && (
+                                                                                                          <div className="border rounded p-2 bg-light mb-2">
+                                                                                                            <div className="fw-semibold small mb-1"><i className="bi bi-clock-history me-1"></i>Timeline</div>
+                                                                                                            <ul className="list-unstyled small mb-0">
+                                                                                                              {detailHistory.map((h, i) => (
+                                                                                                                <li key={i} className="d-flex justify-content-between align-items-start gap-2">
+                                                                                                                  <span>
+                                                                                                                    <span className={`badge ${STATUS_BADGE[h.toStatus] ?? "text-bg-secondary"} text-capitalize`}>{h.toStatus}</span>
+                                                                                                                    {h.reason && <span className="text-muted ms-1">— {h.reason}</span>}
+                                                                                                                  </span>
+                                                                                                                  <span className="text-muted text-nowrap">{new Date(h.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                                                                                                                </li>
+                                                                                                              ))}
+                                                                                                            </ul>
+                                                                                                          </div>
+                                                                                                        )}
+                                                                                                        {orderDetail.paymentMethod === "credit" && (
                                     <div className="border rounded p-2 bg-light">
                                       <div className="fw-semibold small mb-1"><i className="bi bi-pen me-1"></i>Customer signature</div>
                                       {detailSignature === null ? (
