@@ -24,6 +24,7 @@ export class PublicStoreController {
         description: store.description,
         currencyCode: store.currencyCode,
         timezone: store.timezone,
+        status: store.status,
         guestOrderingEnabled: store.guestOrderingEnabled,
         orderingPaused: store.orderingPaused,
         closedStoreMessage: store.closedStoreMessage,
@@ -42,9 +43,14 @@ export class PublicStoreController {
         description: store.description,
         currencyCode: store.currencyCode,
         timezone: store.timezone,
+        status: store.status,
         guestOrderingEnabled: store.guestOrderingEnabled,
         orderingPaused: store.orderingPaused,
-        closedStoreMessage: store.closedStoreMessage,
+        // v6 A2: restricted stores surface a suspended banner; fall back to a generic message.
+        closedStoreMessage:
+          store.status !== "ACTIVE"
+            ? (store.closedStoreMessage ?? "This store is temporarily closed")
+            : store.closedStoreMessage,
         deliveryFeeMinor: store.deliveryFeeMinor,
         deliveryEnabled: store.deliveryEnabled,
         pickupEnabled: store.pickupEnabled,

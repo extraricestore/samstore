@@ -145,11 +145,33 @@ export default function TeamPanel() {
                 </td>
                 <td className="small text-muted">{new Date(m.joinedAt).toLocaleDateString()}</td>
                 <td className="text-end">
-                  {m.role !== "OWNER" && (
-                    <button className="btn btn-sm btn-outline-danger" onClick={() => deactivate(m.userId)}>
-                      <i className="bi bi-person-x"></i>
-                    </button>
-                  )}
+                  <div className="d-flex flex-wrap gap-1 justify-content-end">
+                    {m.role !== "OWNER" && (
+                      <>
+                        <button
+                          className="btn btn-sm btn-outline-secondary"
+                          title="Reset password"
+                          onClick={async () => {
+                            const res = await fetch(`${API_URL}/admin/team/${m.userId}/reset-password`, {
+                              method: "POST", headers: { "Content-Type": "application/json", ...adminHeaders() },
+                              body: JSON.stringify({}),
+                            });
+                            const d = await res.json().catch(() => null);
+                            if (res.ok && typeof d?.tempPassword === "string") {
+                              setTempPassword(d.tempPassword);
+                            } else {
+                              setError(d?.message ?? "Reset failed");
+                            }
+                          }}
+                        >
+                          <i className="bi bi-key me-1"></i>Reset password
+                        </button>
+                        <button className="btn btn-sm btn-outline-danger" onClick={() => deactivate(m.userId)}>
+                          <i className="bi bi-person-x"></i>
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}

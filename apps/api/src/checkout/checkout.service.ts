@@ -113,7 +113,7 @@ export class CheckoutService {
       return { ok: false, error: { type: "not_found", message: "Store not found" } };
     }
     if (store.status !== "ACTIVE") {
-      return { ok: false, error: { type: "conflict", message: "Store is not accepting orders" } };
+      return { ok: false, error: { type: "conflict", message: "This store is not accepting orders right now" } };
     }
     if (store.orderingPaused || !store.guestOrderingEnabled) {
       return {

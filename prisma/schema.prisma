@@ -100,12 +100,14 @@ model User {
   passwordHash String
   name         String?
   role         String   @default("STORE_OWNER") // STORE_OWNER | PLATFORM_ADMIN | MANAGER | STAFF | SALES_AGENT
+  mustChangePassword Boolean @default(false) // v6: set by admin password reset — forces a password change on next login
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
   memberships        UserStore[]
   transfersRequested StockTransfer[] @relation("TransferRequestedBy")
   transfersApproved  StockTransfer[] @relation("TransferApprovedBy")
+  passwordResets     PasswordResetHistory[]
 }
 
 model UserStore {
@@ -146,6 +148,7 @@ model Store {
   orders         Order[]
   storeCustomers StoreCustomer[]
   memberships    StoreMembership[]
+  statusHistory  StoreStatusHistory[]
   userStores     UserStore[]
   counters       StoreCounter[]
   auditLogs      AuditLog[]
@@ -597,6 +600,7 @@ model Customer {
   phone        String?
   passwordHash String?
   name         String?
+  address      String? // v6: customer home/barangay address for delivery & records
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -644,6 +648,30 @@ model CreditEntry {
   createdAt       DateTime      @default(now())
 
   @@index([storeId, storeCustomerId, createdAt])
+}
+
+model StoreStatusHistory {
+  id         String   @id @default(cuid())
+  storeId    String
+  store      Store    @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  fromStatus String?
+  toStatus   String
+  reason     String?
+  changedBy  String? // actor user id (platform admin)
+  createdAt  DateTime @default(now())
+
+  @@index([storeId, createdAt])
+}
+
+model PasswordResetHistory {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  storeId   String   @default("")
+  resetBy   String? // acting admin/owner id
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
 }
 
 model StoreMembership {

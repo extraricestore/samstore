@@ -71,6 +71,8 @@ export default function OrdersPanel() {
   const [confirmAction, setConfirmAction] = useState<{ orderId: string; kind: "void" | "refund" | "voidHold" } | null>(null);
   const [orderDetail, setOrderDetail] = useState<AdminOrder | null>(null);
   const [detailSignature, setDetailSignature] = useState<string | null>(null);
+  const [detailItems, setDetailItems] = useState<{ productName: string; quantity: number; lineTotalMinor: number }[] | null>(null);
+  const [counts, setCounts] = useState<Record<string, number>>({});
   // On-process editing
   const [editHold, setEditHold] = useState<{ id: string; orderNumber: string; status: string; lines: EditLine[] } | null>(null);
   const [products, setProducts] = useState<ProductOption[]>([]);
@@ -99,10 +101,15 @@ export default function OrdersPanel() {
         if (customTo) q.set("to", new Date(new Date(customTo).getTime() + 86_399_000).toISOString());
       }
       if (customer.trim()) q.set("customer", customer.trim());
-      const res = await fetch(`${API_URL}/admin/orders?${q.toString()}`, { headers: adminHeaders() });
-      if (!res.ok) throw new Error("Failed to load orders");
-      const data = await res.json();
-      setOrders(data.orders ?? []);
+            const res = await fetch(`${API_URL}/admin/orders?${q.toString()}`, { headers: adminHeaders() });
+            if (!res.ok) throw new Error("Failed to load orders");
+            const data = await res.json();
+            setOrders(data.orders ?? []);
+            // Per-tab counts (for badges) — fire-and-forget, never blocks the list.
+            fetch(`${API_URL}/admin/orders/counts`, { headers: adminHeaders() })
+              .then((r) => r.json())
+              .then((d) => d?.counts && setCounts(d.counts))
+              .catch(() => {});
       if (canWrite) {
         const p = await fetch(`${API_URL}/admin/products`, { headers: adminHeaders() }).then((r) => r.json());
         const c = await fetch(`${API_URL}/admin/customers`, { headers: adminHeaders() }).then((r) => r.json());
@@ -148,7 +155,7 @@ export default function OrdersPanel() {
       setError(null);
       try {
         const url = kind === "voidHold" ? `${API_URL}/admin/pos/holds/${orderId}/void` : `${API_URL}/admin/orders/${orderId}/${kind}`;
-        const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...adminHeaders() }, body: JSON.stringify({ reason: reasonText }) });
+                const res = await fetch(url, { method: "PATCH", headers: { "Content-Type": "application/json", ...adminHeaders() }, body: JSON.stringify({ reason: reasonText }) });
         const data = await res.json();
         if (!res.ok) { setError(data?.message ?? `${kind} failed`); return; }
         setConfirmAction(null);
@@ -286,18 +293,23 @@ export default function OrdersPanel() {
             </>
           )}
           {o.status !== "ON_HOLD" && canWrite && (
-            <>
-              {/* RECEIVED (Pending): route by analysis */}
-              {o.status === "RECEIVED" && (
-                <>
-                  {editable && <button className="btn btn-sm btn-outline-warning" onClick={() => openEdit(o)}><i className="bi bi-pencil me-1"></i>Edit</button>}
-                  {!isDeliv ? (
-                    <button className="btn btn-sm btn-success" disabled={transitioning === o.id} onClick={() => completeNow(o.id)}><i className="bi bi-check2-circle me-1"></i>Move to completed</button>
-                  ) : (
-                    <button className="btn btn-sm btn-primary" disabled={transitioning === o.id} onClick={() => transition(o.id, "CONFIRMED")}><i className="bi bi-check-lg me-1"></i>Confirm</button>
-                  )}
-                </>
-              )}
+                      <>
+                        {/* RECEIVED (Pending): Receive or Cancel only (operator spec) */}
+                        {o.status === "RECEIVED" && (
+                          <>
+                            <button
+                              className="btn btn-sm btn-primary"
+                              disabled={transitioning === o.id}
+                              onClick={() => (isDeliv ? transition(o.id, "CONFIRMED") : completeNow(o.id))}
+                              title={isDeliv ? "Confirm → On Process" : "Pickup received → Completed"}
+                            >
+                              <i className="bi bi-check-lg me-1"></i>Receive
+                            </button>
+                            <button className="btn btn-sm btn-outline-danger" disabled={transitioning === o.id} onClick={() => transition(o.id, "CANCELLED")}>
+                              <i className="bi bi-x-lg me-1"></i>Cancel
+                            </button>
+                          </>
+                        )}
               {/* On Process: one-tap delivery routing */}
               {isDeliv && ["CONFIRMED", "PREPARING", "READY"].includes(o.status) && (
                 <button className="btn btn-sm btn-primary" disabled={transitioning === o.id} onClick={() => sendForDelivery(o.id)}><i className="bi bi-truck me-1"></i>Send for delivery</button>
@@ -305,12 +317,13 @@ export default function OrdersPanel() {
               {isDeliv && o.status === "CONFIRMED" && editable && (
                 <button className="btn btn-sm btn-outline-warning" onClick={() => openEdit(o)}><i className="bi bi-pencil me-1"></i>Edit</button>
               )}
-              {next.length > 0 && (
-                <select className="form-select form-select-sm" style={{ width: 150 }} value="" disabled={transitioning === o.id} onChange={(e) => e.target.value && transition(o.id, e.target.value)}>
-                  <option value="" disabled>— {o.status} —</option>
-                  {next.map((s) => <option key={s} value={s}>{s}</option>)}
-                </select>
-              )}
+              {/* Status dropdown — shown only where dedicated buttons don't cover all transitions (i.e. NOT on RECEIVED/CONFIRMED which have Receive/Cancel & routing buttons). */}
+                            {next.length > 0 && !["RECEIVED", "CONFIRMED"].includes(o.status) && (
+                              <select className="form-select form-select-sm" style={{ width: 150 }} value="" disabled={transitioning === o.id} onChange={(e) => e.target.value && transition(o.id, e.target.value)}>
+                                <option value="" disabled>— {o.status} —</option>
+                                {next.map((s) => <option key={s} value={s}>{s}</option>)}
+                              </select>
+                            )}
               <button className="btn btn-sm btn-outline-secondary" title="Receipt" onClick={() => setReceiptOrder(o.id)}><i className="bi bi-receipt"></i></button>
               {canVoidRefund && o.status === "COMPLETED" && (
                 <button className="btn btn-sm btn-outline-danger" title="Void/Refund" onClick={() => setConfirmAction({ orderId: o.id, kind: o.paymentStatus === "COLLECTED" ? "refund" : "void" })}><i className="bi bi-x-circle"></i></button>
@@ -341,15 +354,19 @@ export default function OrdersPanel() {
       </>
     );
 
-    /** Opens the Details modal and lazily loads the signature (list endpoint omits it but the detail endpoint returns it). */
-    const openDetail = (o: AdminOrder) => {
-      setOrderDetail(o);
-      setDetailSignature(null);
-      fetch(`${API_URL}/admin/orders/${o.id}`, { headers: adminHeaders() })
-        .then((r) => r.json())
-        .then((d) => setDetailSignature(typeof d?.signatureData === "string" ? (d.signatureData as string) : null))
-        .catch(() => setDetailSignature(null));
-    };
+    /** Opens the Details modal and lazily loads the signature + line items (list endpoint omits them but the detail endpoint returns them). */
+        const openDetail = (o: AdminOrder) => {
+          setOrderDetail(o);
+          setDetailSignature(null);
+          setDetailItems(null);
+          fetch(`${API_URL}/admin/orders/${o.id}`, { headers: adminHeaders() })
+            .then((r) => r.json())
+            .then((d) => {
+              setDetailSignature(typeof d?.signatureData === "string" ? (d.signatureData as string) : null);
+              setDetailItems(Array.isArray(d?.items) ? (d.items as { productName: string; quantity: number; lineTotalMinor: number }[]) : []);
+            })
+            .catch(() => setDetailSignature(null));
+        };
 
   const cardGrid = (
     <div className="d-grid gap-2 d-lg-none">
@@ -417,13 +434,19 @@ export default function OrdersPanel() {
       </div>
 
       {/* Tabs */}
-      <ul className="nav nav-pills mb-3 flex-wrap">
-        {TABS.map((t) => (
-          <li className="nav-item" key={t.id}>
-            <button className={`nav-link ${tab === t.id ? "active bg-primary" : ""}`} onClick={() => setTab(t.id)}>{t.label}</button>
-          </li>
-        ))}
-      </ul>
+            <ul className="nav nav-pills mb-3 flex-wrap">
+              {TABS.map((t) => {
+                const n = t.status ? t.status.reduce((s, st) => s + (counts[st] ?? 0), 0) : 0;
+                return (
+                  <li className="nav-item" key={t.id}>
+                    <button className={`nav-link ${tab === t.id ? "active bg-primary" : ""}`} onClick={() => setTab(t.id)}>
+                      {t.label}
+                      {n > 0 && <span className={`badge ${tab === t.id ? "text-bg-primary" : "text-bg-secondary"} rounded-pill ms-1`}>{n > 99 ? "99+" : n}</span>}
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
 
       {loading ? (
         <p className="text-muted">Loading orders…</p>
@@ -608,7 +631,27 @@ export default function OrdersPanel() {
                                     )}
                                     {orderDetail.source && <><dt className="col-5">Source</dt><dd className="col-7">{orderDetail.source}</dd></>}
                                   </dl>
-                                  {orderDetail.paymentMethod === "credit" && (
+                                                                    {detailItems && (
+                                                                      <div className="border rounded p-2 bg-light mb-2">
+                                                                        <div className="fw-semibold small mb-1"><i className="bi bi-box-seam me-1"></i>Items</div>
+                                                                        {detailItems.length === 0 ? (
+                                                                          <p className="text-muted small mb-0">No items.</p>
+                                                                        ) : (
+                                                                          <table className="table table-sm mb-0">
+                                                                            <tbody>
+                                                                              {detailItems.map((i, idx) => (
+                                                                                <tr key={idx}>
+                                                                                  <td className="small">{i.productName}</td>
+                                                                                  <td className="text-end small">×{i.quantity}</td>
+                                                                                  <td className="text-end small">{toPesos(i.lineTotalMinor)}</td>
+                                                                                </tr>
+                                                                              ))}
+                                                                            </tbody>
+                                                                          </table>
+                                                                        )}
+                                                                      </div>
+                                                                    )}
+                                                                    {orderDetail.paymentMethod === "credit" && (
                                     <div className="border rounded p-2 bg-light">
                                       <div className="fw-semibold small mb-1"><i className="bi bi-pen me-1"></i>Customer signature</div>
                                       {detailSignature === null ? (

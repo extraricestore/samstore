@@ -245,6 +245,7 @@ export interface AdminCreateCustomerRequest {
   name: string;
   phone?: string;
   email?: string;
+  address?: string;
   /** v4: pre-approve for credit + optional limit (minor) */
   creditApproved?: boolean;
   creditLimitMinor?: number;
@@ -254,6 +255,7 @@ export interface AdminUpdateCustomerRequest {
   name?: string;
   phone?: string;
   email?: string;
+  address?: string;
   creditLimitMinor?: number;
 }
 

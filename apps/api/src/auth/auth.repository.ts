@@ -11,6 +11,14 @@ export interface AuthUserRecord {
   role: string;
   /** store memberships: storeId + role */
   memberships: { storeId: string; role: string }[];
+  /** v6: set by an admin password reset — forces a password change on next login. */
+  mustChangePassword?: boolean;
+}
+
+export interface MembershipLookup {
+  storeId: string;
+  role: string;
+  status: string;
 }
 
 export interface AuthRepository {
@@ -22,6 +30,15 @@ export interface AuthRepository {
     role: string,
     storeBinding?: { storeId: string; role: string },
   ): Promise<AuthUserRecord>;
+  /**
+   * v6 user-management helpers (implemented by PrismaAuthRepository).
+   * Optional so legacy in-memory test doubles of AuthRepository keep compiling;
+   * AuthService guards with a runtime check before using them.
+   */
+  resetPassword?(userId: string, passwordHash: string): Promise<void>;
+  setMustChange?(userId: string, mustChange: boolean): Promise<void>;
+  findMemberships?(userId: string): Promise<MembershipLookup[]>;
+  updateProfile?(userId: string, name: string | null, email: string): Promise<void>;
 }
 
 export class PrismaAuthRepository implements AuthRepository {
@@ -38,6 +55,7 @@ export class PrismaAuthRepository implements AuthRepository {
       name: u.name,
       role: u.role ?? "STORE_OWNER",
       memberships: u.memberships.map((m) => ({ storeId: m.storeId, role: m.role })),
+      mustChangePassword: u.mustChangePassword ?? false,
     };
   }
 
@@ -71,6 +89,28 @@ export class PrismaAuthRepository implements AuthRepository {
       name: u.name,
       role: u.role,
       memberships: u.memberships.map((m) => ({ storeId: m.storeId, role: m.role })),
+      mustChangePassword: u.mustChangePassword ?? false,
     };
+  }
+
+  /** Replace the user's bcrypt password hash (admin password reset / self change). */
+  async resetPassword(userId: string, passwordHash: string): Promise<void> {
+    await prisma.user.update({ where: { id: userId }, data: { passwordHash } });
+  }
+
+  /** v6: set/unset the must-change-password-on-next-login flag. */
+  async setMustChange(userId: string, mustChange: boolean): Promise<void> {
+    await prisma.user.update({ where: { id: userId }, data: { mustChangePassword: mustChange } });
+  }
+
+  /** v6: update a user's own profile (name/email). Email uniqueness is the controller's job. */
+  async updateProfile(userId: string, name: string | null, email: string): Promise<void> {
+    await prisma.user.update({ where: { id: userId }, data: { name, email } });
+  }
+
+  /** All store memberships for a user (any status). */
+  async findMemberships(userId: string): Promise<MembershipLookup[]> {
+    const rows = await prisma.userStore.findMany({ where: { userId } });
+    return rows.map((m) => ({ storeId: m.storeId, role: m.role, status: m.status }));
   }
 }

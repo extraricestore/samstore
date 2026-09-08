@@ -16,6 +16,7 @@ export type AdminCustomerRow = {
   name: string | null;
   email: string | null;
   phone: string | null;
+  address: string | null;
   approvalStatus: string;
   loyaltyPoints: number;
   creditApproved: boolean;
@@ -31,7 +32,7 @@ export const LOYALTY_SERVICE = Symbol("LOYALTY_SERVICE");
 interface AdminCustomerWithProfile {
   id: string; storeId: string; customerId: string; approvalStatus: string; loyaltyBalancePoints: number;
   creditApproved: boolean; creditLimitMinor: number; creditBalanceMinor: number; createdAt: Date; updatedAt: Date;
-  customer: { id: string; email: string | null; name: string | null; phone: string | null };
+  customer: { id: string; email: string | null; name: string | null; phone: string | null; address: string | null };
 }
 
 export class LoyaltyService implements LoyaltyGateway {
@@ -161,7 +162,7 @@ export class LoyaltyService implements LoyaltyGateway {
         const rows = await prisma.storeCustomer.findMany({
           where,
           orderBy: { createdAt: "desc" },
-          include: { customer: { select: { id: true, email: true, name: true, phone: true } } },
+          include: { customer: { select: { id: true, email: true, name: true, phone: true, address: true } } },
         });
         if (plain) cacheSet(cacheKey("customers", storeId), rows, 30_000);
         return rows;
@@ -172,7 +173,7 @@ export class LoyaltyService implements LoyaltyGateway {
     const sc = await prisma.storeCustomer.findFirst({
       where: { storeId, id: storeCustomerId },
       include: {
-        customer: { select: { id: true, email: true, name: true, phone: true } },
+        customer: { select: { id: true, email: true, name: true, phone: true, address: true } },
         credit: { orderBy: { createdAt: "desc" }, take: 50 },
       },
     });
@@ -201,49 +202,51 @@ export class LoyaltyService implements LoyaltyGateway {
 
   /** Admin row shape — mirrors GET /admin/customers list mapping. */
   static toAdminRow(sc: {
-    id: string;
-    customerId: string;
-    approvalStatus: string;
-    loyaltyBalancePoints: number;
-    creditApproved: boolean;
-    creditLimitMinor: number;
-    creditBalanceMinor: number;
-    createdAt: Date;
-    customer: { name: string | null; email: string | null; phone: string | null };
-  }): AdminCustomerRow {
-    return {
-      id: sc.id,
-      customerId: sc.customerId,
-      name: sc.customer.name,
-      email: sc.customer.email,
-      phone: sc.customer.phone,
-      approvalStatus: sc.approvalStatus,
-      loyaltyPoints: sc.loyaltyBalancePoints,
-      creditApproved: sc.creditApproved,
-      creditLimitMinor: sc.creditLimitMinor,
-      creditBalanceMinor: sc.creditBalanceMinor,
-      joinedAt: sc.createdAt,
-    };
-  }
+      id: string;
+      customerId: string;
+      approvalStatus: string;
+      loyaltyBalancePoints: number;
+      creditApproved: boolean;
+      creditLimitMinor: number;
+      creditBalanceMinor: number;
+      createdAt: Date;
+      customer: { name: string | null; email: string | null; phone: string | null; address: string | null };
+    }): AdminCustomerRow {
+      return {
+        id: sc.id,
+        customerId: sc.customerId,
+        name: sc.customer.name,
+        email: sc.customer.email,
+        phone: sc.customer.phone,
+        address: sc.customer.address,
+        approvalStatus: sc.approvalStatus,
+        loyaltyPoints: sc.loyaltyBalancePoints,
+        creditApproved: sc.creditApproved,
+        creditLimitMinor: sc.creditLimitMinor,
+        creditBalanceMinor: sc.creditBalanceMinor,
+        joinedAt: sc.createdAt,
+      };
+    }
 
   /** Admin: create a customer — find-or-create the global Customer by phone (then email), then create the store profile. */
   async createCustomer(storeId: string, input: AdminCreateCustomerRequest): Promise<LoyaltyResult<AdminCustomerRow>> {
     const name = typeof input.name === "string" ? input.name.trim() : "";
     if (!name) return { ok: false, error: { type: "validation", errors: ["name is required"] } };
     const phone = typeof input.phone === "string" && input.phone.trim() ? input.phone.trim() : null;
-    const email = typeof input.email === "string" && input.email.trim() ? input.email.trim() : null;
-    const creditApproved = input.creditApproved === true;
-    const creditLimitMinor = input.creditLimitMinor ?? 0;
-    if (!Number.isInteger(creditLimitMinor) || creditLimitMinor < 0) {
-      return { ok: false, error: { type: "validation", errors: ["creditLimitMinor must be a non-negative integer"] } };
-    }
+        const email = typeof input.email === "string" && input.email.trim() ? input.email.trim() : null;
+        const address = typeof input.address === "string" && input.address.trim() ? input.address.trim() : null;
+        const creditApproved = input.creditApproved === true;
+        const creditLimitMinor = input.creditLimitMinor ?? 0;
+        if (!Number.isInteger(creditLimitMinor) || creditLimitMinor < 0) {
+          return { ok: false, error: { type: "validation", errors: ["creditLimitMinor must be a non-negative integer"] } };
+        }
 
-    const done = await prisma.$transaction(async (tx) => {
-      let customer = phone ? await tx.customer.findFirst({ where: { phone } }) : null;
-      if (!customer && email) customer = await tx.customer.findFirst({ where: { email } });
-      if (!customer) {
-        customer = await tx.customer.create({ data: { name, email, phone } });
-      }
+        const done = await prisma.$transaction(async (tx) => {
+          let customer = phone ? await tx.customer.findFirst({ where: { phone } }) : null;
+          if (!customer && email) customer = await tx.customer.findFirst({ where: { email } });
+          if (!customer) {
+            customer = await tx.customer.create({ data: { name, email, phone, address } });
+          }
       const existing = await tx.storeCustomer.findFirst({ where: { storeId, customerId: customer!.id } });
       if (existing) return { created: false as const };
       const sc = await tx.storeCustomer.create({
@@ -254,7 +257,7 @@ export class LoyaltyService implements LoyaltyGateway {
           creditApproved,
           creditLimitMinor,
         },
-        include: { customer: { select: { id: true, email: true, name: true, phone: true } } },
+        include: { customer: { select: { id: true, email: true, name: true, phone: true, address: true } } },
       });
       return { created: true as const, row: LoyaltyService.toAdminRow(sc) };
     });
@@ -266,20 +269,24 @@ export class LoyaltyService implements LoyaltyGateway {
 
   /** Admin: update a store customer (name/phone/email + credit limit). Store-scoped. */
   async updateCustomer(storeId: string, storeCustomerId: string, input: AdminUpdateCustomerRequest): Promise<LoyaltyResult<AdminCustomerRow>> {
-    const customerData: { name?: string; phone?: string | null; email?: string | null } = {};
-    if (input.name !== undefined) {
-      const name = typeof input.name === "string" ? input.name.trim() : "";
-      if (!name) return { ok: false, error: { type: "validation", errors: ["name must be a non-empty string"] } };
-      customerData.name = name;
-    }
-    if (input.phone !== undefined) {
-      const phone = typeof input.phone === "string" ? input.phone.trim() : "";
-      customerData.phone = phone || null;
-    }
-    if (input.email !== undefined) {
-      const email = typeof input.email === "string" ? input.email.trim() : "";
-      customerData.email = email || null;
-    }
+    const customerData: { name?: string; phone?: string | null; email?: string | null; address?: string | null } = {};
+        if (input.name !== undefined) {
+          const name = typeof input.name === "string" ? input.name.trim() : "";
+          if (!name) return { ok: false, error: { type: "validation", errors: ["name must be a non-empty string"] } };
+          customerData.name = name;
+        }
+        if (input.phone !== undefined) {
+          const phone = typeof input.phone === "string" ? input.phone.trim() : "";
+          customerData.phone = phone || null;
+        }
+        if (input.email !== undefined) {
+          const email = typeof input.email === "string" ? input.email.trim() : "";
+          customerData.email = email || null;
+        }
+        if (input.address !== undefined) {
+          const address = typeof input.address === "string" ? input.address.trim() : "";
+          customerData.address = address || null;
+        }
     let creditLimitMinor: number | undefined;
     if (input.creditLimitMinor !== undefined) {
       if (!Number.isInteger(input.creditLimitMinor) || input.creditLimitMinor < 0) {
@@ -291,7 +298,7 @@ export class LoyaltyService implements LoyaltyGateway {
     const row = await prisma.$transaction(async (tx) => {
       const sc = await tx.storeCustomer.findFirst({
         where: { id: storeCustomerId, storeId },
-        include: { customer: { select: { id: true, email: true, name: true, phone: true } } },
+        include: { customer: { select: { id: true, email: true, name: true, phone: true, address: true } } },
       });
       if (!sc) return null;
       if (Object.keys(customerData).length > 0) {
@@ -302,7 +309,7 @@ export class LoyaltyService implements LoyaltyGateway {
       }
       const fresh = await tx.storeCustomer.findFirst({
         where: { id: sc.id },
-        include: { customer: { select: { id: true, email: true, name: true, phone: true } } },
+        include: { customer: { select: { id: true, email: true, name: true, phone: true, address: true } } },
       });
       return fresh ? LoyaltyService.toAdminRow(fresh) : null;
     });

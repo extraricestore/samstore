@@ -118,6 +118,7 @@ export const NAV_GROUPS: NavGroup[] = [
     group: "system",
     label: "System",
     items: [
+      { id: "useraccess", label: "User Access", icon: "bi-person-badge" },
       { id: "warehouses", label: "Warehouses", icon: "bi-archive" },
       { id: "stores", label: "Stores", icon: "bi-shop-window" },
       { id: "maintenance", label: "Maintenance", icon: "bi-tools" },
@@ -127,8 +128,8 @@ export const NAV_GROUPS: NavGroup[] = [
 
 /** Tab visibility per staff role (GET-level permissions from live API probes). */
 export const TABS_BY_ROLE: Record<string, string[]> = {
-  STORE_OWNER: ["overview", "pos", "preorders", "orders", "utang", "products", "inventory", "expenses", "purchases", "team", "customers", "vouchers", "analytics", "reports", "settings", "storelink", "warehouses", "stores", "maintenance"],
-  PLATFORM_ADMIN: ["overview", "pos", "preorders", "orders", "utang", "products", "inventory", "expenses", "purchases", "team", "customers", "vouchers", "analytics", "reports", "settings", "storelink", "warehouses", "stores", "maintenance"],
+  STORE_OWNER: ["overview", "pos", "preorders", "orders", "utang", "products", "inventory", "expenses", "purchases", "team", "customers", "vouchers", "analytics", "reports", "settings", "storelink", "warehouses", "stores", "maintenance", "useraccess"],
+  PLATFORM_ADMIN: ["overview", "pos", "preorders", "orders", "utang", "products", "inventory", "expenses", "purchases", "team", "customers", "vouchers", "analytics", "reports", "settings", "storelink", "warehouses", "stores", "maintenance", "useraccess"],
   MANAGER: ["overview", "pos", "preorders", "orders", "utang", "products", "inventory", "expenses", "purchases", "team", "customers", "vouchers", "analytics", "reports", "settings", "warehouses", "maintenance"],
   STAFF: ["overview", "pos", "preorders", "orders", "utang", "products", "inventory", "expenses", "purchases", "team", "customers", "vouchers", "analytics", "reports", "settings", "warehouses", "maintenance"],
   SALES_AGENT: ["orders", "team", "reports"],

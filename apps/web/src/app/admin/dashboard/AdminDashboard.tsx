@@ -18,6 +18,7 @@ import AnalyticsPanel from "../../../components/admin/AnalyticsPanel";
 import MaintenancePanel from "../../../components/admin/MaintenancePanel";
 import TeamPanel from "../../../components/admin/TeamPanel";
 import WarehousesPanel from "../../../components/admin/WarehousesPanel";
+import UserAccessPanel from "../../../components/admin/UserAccessPanel";
 import PosPanel from "../../../components/admin/PosPanel";
 import PreOrdersPanel from "../../../components/admin/PreOrdersPanel";
 import UtangPanel from "../../../components/admin/UtangPanel";
@@ -106,6 +107,7 @@ export default function AdminDashboard() {
       case "customers": return <CustomersPanel />;
       case "analytics": return <AnalyticsPanel />;
       case "maintenance": return <MaintenancePanel />;
+      case "useraccess": return <UserAccessPanel />;
       case "warehouses": return <WarehousesPanel />;
       case "stores": return <StoresPanel />;
       default: return <OrdersPanel />;

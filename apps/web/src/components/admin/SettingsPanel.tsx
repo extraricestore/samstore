@@ -127,6 +127,51 @@ export default function SettingsPanel() {
 
   if (loading) return <p className="text-muted">Loading…</p>;
 
+  // ── Account: change password + edit profile ──
+  const [curPw, setCurPw] = useState("");
+  const [newPw, setNewPw] = useState("");
+  const [pwMsg, setPwMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [pwBusy, setPwBusy] = useState(false);
+  const [profName, setProfName] = useState("");
+    const [profEmail, setProfEmail] = useState(typeof sessionStorage !== "undefined" ? (sessionStorage.getItem("samstore.admin.email") ?? "") : "");
+  const [profMsg, setProfMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [profBusy, setProfBusy] = useState(false);
+
+  const changePw = async () => {
+    if (newPw.length < 8) { setPwMsg({ ok: false, text: "New password must be at least 8 characters." }); return; }
+    setPwBusy(true); setPwMsg(null);
+    try {
+      const res = await fetch(`${API_URL}/auth/change-password`, {
+        method: "POST", headers: { "Content-Type": "application/json", ...adminHeaders() },
+        body: JSON.stringify({ email: profEmail, currentPassword: curPw, newPassword: newPw }),
+      });
+      const d = await res.json();
+      if (!res.ok) { setPwMsg({ ok: false, text: d?.message ?? "Change failed" }); return; }
+      setPwMsg({ ok: true, text: "Password changed successfully." });
+      setCurPw(""); setNewPw("");
+      if (typeof d?.token === "string") sessionStorage.setItem("samstore.admin.token", d.token);
+    } catch {
+      setPwMsg({ ok: false, text: "Network error — could not change password." });
+    } finally { setPwBusy(false); }
+  };
+
+  const saveProfile = async () => {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(profEmail)) { setProfMsg({ ok: false, text: "Enter a valid email." }); return; }
+    setProfBusy(true); setProfMsg(null);
+    try {
+      const res = await fetch(`${API_URL}/admin/auth/profile`, {
+        method: "PATCH", headers: { "Content-Type": "application/json", ...adminHeaders() },
+        body: JSON.stringify({ email: profEmail.trim(), name: profName.trim() || null }),
+      });
+      const d = await res.json();
+      if (!res.ok) { setProfMsg({ ok: false, text: d?.message ?? d?.errors?.join(", ") ?? "Save failed" }); return; }
+      setProfMsg({ ok: true, text: "Profile updated." });
+      sessionStorage.setItem("samstore.admin.email", d.email);
+    } catch {
+      setProfMsg({ ok: false, text: "Network error — could not save profile." });
+    } finally { setProfBusy(false); }
+  };
+
   return (
     <div>
       <h1 className="h4 mb-3">Store Settings</h1>
@@ -220,12 +265,41 @@ export default function SettingsPanel() {
                               </div>
 
                               <button className="btn btn-primary mt-3" type="submit" disabled={saving}>
-                {saving ? "Saving…" : "Save settings"}
-              </button>
-            </div>
-          </form>
-        </>
-      )}
-    </div>
-  );
+                                              {saving ? "Saving…" : "Save settings"}
+                                            </button>
+                                          </div>
+                                        </form>
+
+                                        {/* Account: edit profile + change password */}
+                                        <div className="card mb-4">
+                                          <div className="card-body">
+                                            <h6 className="fw-bold"><i className="bi bi-person me-2"></i>My profile</h6>
+                                            <label className="form-label small">Name</label>
+                                            <input className="form-control" value={profName} onChange={(e) => setProfName(e.target.value)} placeholder="Your name" />
+                                            <label className="form-label small mt-2">Email</label>
+                                            <input className="form-control" type="email" value={profEmail} onChange={(e) => setProfEmail(e.target.value)} placeholder="you@store.com" />
+                                            {profMsg && <div className={`alert ${profMsg.ok ? "alert-success" : "alert-danger"} py-2 small mt-2`}>{profMsg.text}</div>}
+                                            <button className="btn btn-outline-primary mt-2" disabled={profBusy} onClick={saveProfile}>
+                                              {profBusy ? "Saving…" : "Save profile"}
+                                            </button>
+                                          </div>
+                                        </div>
+
+                                        <div className="card mb-4">
+                                          <div className="card-body">
+                                            <h6 className="fw-bold"><i className="bi bi-shield-lock me-2"></i>Change password</h6>
+                                            <label className="form-label small">Current password</label>
+                                            <input className="form-control" type="password" value={curPw} onChange={(e) => setCurPw(e.target.value)} />
+                                            <label className="form-label small mt-2">New password (min 8 characters)</label>
+                                            <input className="form-control" type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} />
+                                            {pwMsg && <div className={`alert ${pwMsg.ok ? "alert-success" : "alert-danger"} py-2 small mt-2`}>{pwMsg.text}</div>}
+                                            <button className="btn btn-outline-secondary mt-2" disabled={pwBusy} onClick={changePw}>
+                                              {pwBusy ? "Changing…" : "Change password"}
+                                            </button>
+                                          </div>
+                                        </div>
+                                      </>
+                                    )}
+                                  </div>
+                                );
 }

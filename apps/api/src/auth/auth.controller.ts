@@ -50,4 +50,17 @@ export class AuthController {
     if (!r.ok) throw new HttpException(r.error, statusFor(r.error));
     return r.value;
   }
+
+  /** POST /auth/change-password — PUBLIC: the must-change user has no token yet,
+   *  so they prove their current (temp) password to set a new one + receive a fresh JWT. */
+  @Post("change-password")
+  async changePassword(@Body() body: { email: string; currentPassword: string; newPassword: string }) {
+    const r = await this.auth.changePassword({
+      email: (body?.email ?? "").trim().toLowerCase(),
+      currentPassword: body?.currentPassword ?? "",
+      newPassword: body?.newPassword ?? "",
+    });
+    if (!r.ok) throw new HttpException(r.error, statusFor(r.error));
+    return r.value;
+  }
 }

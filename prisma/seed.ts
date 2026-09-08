@@ -55,6 +55,20 @@ async function main() {
     },
   });
 
+  // Store owner (demo) — ensure an OWNER membership so platform admin can manage/reset the owner.
+  const ownerUser = await prisma.user.upsert({
+    where: { email: "admin@samstore.test" },
+    update: { role: "STORE_OWNER", name: "Test Admin" },
+    create: { email: "admin@samstore.test", passwordHash: await bcrypt.hash("admin-pass-123", 12), name: "Test Admin", role: "STORE_OWNER" },
+  });
+  // Repair: if a store has no OWNER membership, this demo owner claims it (keeps owner-reset + owner-team rules working).
+  const ownerExists = await prisma.userStore.findFirst({ where: { storeId: store.id, role: "OWNER" } });
+  await prisma.userStore.upsert({
+    where: { userId_storeId: { userId: ownerUser.id, storeId: store.id } },
+    update: { role: "OWNER", status: "ACTIVE" },
+    create: { userId: ownerUser.id, storeId: store.id, role: "OWNER", status: "ACTIVE" },
+  });
+
   const drinks = await prisma.category.upsert({
     where: { storeId_slug: { storeId: store.id, slug: "drinks" } },
     update: {},

@@ -138,6 +138,221 @@ export class AdminController {
       include: { store: { select: { id: true, name: true, slug: true } } },
     });
     return { stores: memberships.map((m) => ({ id: m.store.id, name: m.store.name, slug: m.store.slug, role: m.role })) };
+      }
+
+      // ─────────────────────────────── v6: store status & data (platform admin) ───────────────────────────────
+
+      /** Platform admin only — cross-store management routes. */
+      private requirePlatformAdmin(user: AuthPrincipal | undefined): asserts user is AuthPrincipal {
+        requireAdmin(user);
+        if (user.role !== "PLATFORM_ADMIN") {
+          throw new HttpException({ type: "forbidden", message: "Platform admin only" }, HttpStatus.FORBIDDEN);
+        }
+      }
+
+      /** A1 — PATCH /admin/stores/:id/status — suspend/reinstate/archive/close a store (audited). */
+      @Patch("stores/:id/status")
+      async setStoreStatus(
+        @Req() req: Request & { user?: AuthPrincipal },
+        @Param("id") id: string,
+        @Body() body: { status: string; reason?: string },
+      ) {
+        const user = req.user;
+        this.requirePlatformAdmin(user);
+        const result = await this.storesAdmin.setStatus(id, null, body.status, body.reason, user.sub);
+        if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+        return result.value;
+      }
+
+      /** C — GET /admin/stores/:id/summary — per-store data summary (platform admin). */
+      @Get("stores/:id/summary")
+      async storeSummary(@Req() req: Request & { user?: AuthPrincipal }, @Param("id") id: string) {
+        const user = req.user;
+        this.requirePlatformAdmin(user);
+        return { ...(await this.storesAdmin.getDataSummary(id)), storeId: id };
+      }
+
+      /** C — GET /admin/stores/:id/probe — cross-store isolation probe (platform admin). */
+      @Get("stores/:id/probe")
+      async storeProbe(
+        @Req() req: Request & { user?: AuthPrincipal },
+        @Param("id") id: string,
+        @Headers("authorization") authHeader?: string,
+      ) {
+        const user = req.user;
+        this.requirePlatformAdmin(user);
+        const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : "";
+        return { ...(await this.storesAdmin.isolationProbe(id, token)), storeId: id };
+      }
+
+      // ─────────────────────────────── v6: store access & user management ───────────────────────────────
+
+  /**
+   * User-management surface (B1–B3, A3): platform admin OR that store's ACTIVE OWNER.
+   * Unknown store → 404 (no enumeration); anyone else → 403.
+   */
+  private async requireStoreManager(user: AuthPrincipal | undefined, storeId: string): Promise<void> {
+    requireAdmin(user);
+    const store = await prisma.store.findUnique({ where: { id: storeId }, select: { id: true } });
+    if (!store) throw new HttpException({ type: "not_found", message: "Store not found" }, HttpStatus.NOT_FOUND);
+    if (user.role === "PLATFORM_ADMIN") return;
+    const m = await prisma.userStore.findUnique({ where: { userId_storeId: { userId: user.sub, storeId } } });
+    if (m && m.status === "ACTIVE" && m.role === "OWNER") return;
+    throw new HttpException({ type: "forbidden", message: "Platform admin or store owner only" }, HttpStatus.FORBIDDEN);
+  }
+
+  /** B1 — GET /admin/stores/:id/users — members directory for a store. */
+  @Get("stores/:id/users")
+  async storeUsers(@Req() req: Request & { user?: AuthPrincipal }, @Param("id") storeId: string) {
+    const user = req.user;
+    requireAdmin(user);
+    await this.requireStoreManager(user, storeId);
+    const rows = await prisma.userStore.findMany({
+      where: { storeId },
+      include: { user: { select: { id: true, email: true, name: true, role: true, mustChangePassword: true } } },
+      orderBy: { createdAt: "asc" },
+    });
+    return {
+          members: rows.map((m) => ({
+            userId: m.user.id,
+            email: m.user.email,
+            name: m.user.name,
+            role: m.role,
+            status: m.status,
+            mustChangePassword: m.user.mustChangePassword,
+            joinedAt: m.createdAt,
+          })),
+          storeId,
+        };
+      }
+
+      /** POST /admin/stores/:id/users — PLATFORM_ADMIN (or that store's owner) adds a user to a store.
+       *  Reuses the team-invite logic (creates user + temp password + membership). */
+      @Post("stores/:id/users")
+      async addStoreUser(
+        @Req() req: Request & { user?: AuthPrincipal },
+        @Param("id") storeId: string,
+        @Body() body: { email: string; name?: string; role?: string },
+      ) {
+        const user = req.user;
+        requireAdmin(user);
+        await this.requireStoreManager(user, storeId);
+        const result = await this.team.invite(storeId, body?.email ?? "", body?.name ?? null, body?.role ?? "STAFF");
+        if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+        return result.value;
+      }
+
+  /** B2 — PATCH /admin/stores/:id/users/:userId/role — change a member's role. */
+  @Patch("stores/:id/users/:userId/role")
+  async changeStoreUserRole(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Param("id") storeId: string,
+    @Param("userId") userId: string,
+    @Body() body: { role: string },
+  ) {
+    const user = req.user;
+    requireAdmin(user);
+    await this.requireStoreManager(user, storeId);
+    if (userId === user.sub) {
+      throw new HttpException({ type: "forbidden", message: "Cannot change your own membership role" }, HttpStatus.FORBIDDEN);
+    }
+    const result = await this.auth.changeRole({ storeId, userId, role: body.role });
+    if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+    return result.value;
+  }
+
+  /**
+   * B3 — POST /admin/stores/:id/users/:userId/reset-password — reset a member's
+   * password. Returns the temp password exactly once; the user must change it on
+   * next login. Records a PasswordResetHistory audit row.
+   */
+  @Post("stores/:id/users/:userId/reset-password")
+    async resetStoreUserPassword(
+      @Req() req: Request & { user?: AuthPrincipal },
+      @Param("id") storeId: string,
+      @Param("userId") userId: string,
+      @Body() body: { newPassword?: string },
+    ) {
+      const user = req.user;
+      requireAdmin(user);
+      // Access rule (operator decision 2026-09-08): platform admin may reset ONLY the
+      // store's OWNER account. The store's owner resets their own team via /admin/team/... 
+      if (user.role === "PLATFORM_ADMIN") {
+        const target = await prisma.userStore.findUnique({ where: { userId_storeId: { userId, storeId } }, include: { user: { select: { id: true } } } });
+        if (!target) throw new HttpException({ type: "not_found", message: "Member not part of this store" }, HttpStatus.NOT_FOUND);
+        if (target.role !== "OWNER") {
+          throw new HttpException({ type: "forbidden", message: "Platform admin can only reset a store owner's password. The owner resets their own team." }, HttpStatus.FORBIDDEN);
+        }
+        if (target.userId === user.sub) {
+          throw new HttpException({ type: "forbidden", message: "Use your own password change to update your credentials" }, HttpStatus.FORBIDDEN);
+        }
+      } else {
+        // Store owner path: must be that store's OWNER (requireStoreManager already limits to OWNER/platform).
+        await this.requireStoreManager(user, storeId);
+        if (user.sub === userId) {
+          throw new HttpException({ type: "forbidden", message: "Use your own password change to update your credentials" }, HttpStatus.FORBIDDEN);
+        }
+      }
+      const result = await this.auth.resetPassword({ userId, storeId, resetBy: user.sub, newPassword: body.newPassword });
+      if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+      return result.value;
+    }
+
+  /**
+   * B3 must-change flow — POST /admin/auth/change-password — the user proves the
+   * current (temp) password, sets a new one, and receives a fresh token.
+   */
+  @Post("auth/change-password")
+    async changePassword(
+      @Req() req: Request & { user?: AuthPrincipal },
+      @Body() body: { email?: string; currentPassword: string; newPassword: string },
+    ) {
+      // The must-change user has NO token (login returns 403 + mustChangePassword).
+      // Proving the current password IS the authentication here — no token required.
+      const email = (req.user?.email ?? body.email ?? "").trim().toLowerCase();
+      const result = await this.auth.changePassword({
+        email,
+        currentPassword: body.currentPassword ?? "",
+        newPassword: body.newPassword ?? "",
+      });
+      if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+      return result.value;
+    }
+
+  /** PATCH /admin/auth/profile — logged-in user edits their own profile (name/email). */
+  @Patch("auth/profile")
+  async updateOwnProfile(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Body() body: { email?: string; name?: string | null },
+  ) {
+    const user = req.user;
+    if (!user) throw new HttpException({ type: "unauthorized", message: "Not authenticated" }, HttpStatus.UNAUTHORIZED);
+    const result = await this.auth.updateProfile({
+      userId: user.sub,
+      email: body?.email ?? "",
+      name: typeof body?.name === "string" ? body.name : null,
+    });
+    if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+    return result.value;
+  }
+
+  /** A3 — PATCH /admin/stores/:id/users/:userId/access — per-user access within a store. */
+  @Patch("stores/:id/users/:userId/access")
+  async setStoreUserAccess(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Param("id") storeId: string,
+    @Param("userId") userId: string,
+    @Body() body: { status: "ACTIVE" | "DEACTIVATED" },
+  ) {
+    const user = req.user;
+    requireAdmin(user);
+    await this.requireStoreManager(user, storeId);
+    if (body.status !== "ACTIVE" && body.status !== "DEACTIVATED") {
+      throw new HttpException({ type: "validation", errors: ["status must be ACTIVE or DEACTIVATED"] }, HttpStatus.UNPROCESSABLE_ENTITY);
+    }
+    const result = await this.auth.setUserAccess({ storeId, userId, status: body.status });
+    if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+    return result.value;
   }
 
   /** GET /admin/stores — all stores (platform admin only). */
@@ -180,6 +395,12 @@ export class AdminController {
     const user = req.user;
         requireView(user);
         const storeId = await this.resolveStoreId(user, headerStoreId);
+        // Date hardening: non-parseable dates → 422 (never 500).
+        for (const [key, val] of [["from", from], ["to", to]] as const) {
+          if (val !== undefined && Number.isNaN(Date.parse(val))) {
+            throw new HttpException({ type: "validation", errors: [`${key} must be an ISO date`] }, HttpStatus.UNPROCESSABLE_ENTITY);
+          }
+        }
         const cacheKeyStr = cacheKey("orders", storeId, status ?? "", from ?? "", to ?? "", customer ?? "");
         const hit = cacheGet<unknown[]>(cacheKeyStr);
         if (hit) return { orders: hit, storeId };
@@ -207,10 +428,26 @@ export class AdminController {
           },
         });
         cacheSet(cacheKeyStr, list, 5_000);
-        return { orders: list, storeId };
-  }
+                return { orders: list, storeId };
+          }
 
-  /** GET /admin/orders/:id — full detail (items + history). */
+          /** GET /admin/orders/counts — per-status order counts (for tab badges). Cached 5s. */
+          @Get("orders/counts")
+          async orderCounts(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
+            const user = req.user;
+            requireView(user);
+            const storeId = await this.resolveStoreId(user, headerStoreId);
+            const key = cacheKey("orders-counts", storeId);
+            const hit = cacheGet<unknown>(key);
+            if (hit) return { counts: hit, storeId };
+            const groups = await prisma.order.groupBy({ by: ["status"], where: { storeId }, _count: { _all: true } });
+            const counts: Record<string, number> = {};
+            for (const g of groups) counts[g.status] = g._count._all;
+            cacheSet(key, counts, 5_000);
+            return { counts, storeId };
+          }
+
+          /** GET /admin/orders/:id — full detail (items + history). */
   @Get("orders/:id")
   async orderDetail(@Req() req: Request & { user?: AuthPrincipal }, @Param("id") id: string, @Headers("x-store-id") headerStoreId?: string) {
     const user = req.user;
@@ -447,18 +684,19 @@ export class AdminController {
     });
     return {
       customers: customers.map((sc) => ({
-        id: sc.id,
-        customerId: sc.customerId,
-        name: sc.customer.name,
-        email: sc.customer.email,
-        phone: sc.customer.phone,
-        approvalStatus: sc.approvalStatus,
-        loyaltyPoints: sc.loyaltyBalancePoints,
-        creditApproved: sc.creditApproved,
-        creditLimitMinor: sc.creditLimitMinor,
-        creditBalanceMinor: sc.creditBalanceMinor,
-        joinedAt: sc.createdAt,
-      })),
+              id: sc.id,
+              customerId: sc.customerId,
+              name: sc.customer.name,
+              email: sc.customer.email,
+              phone: sc.customer.phone,
+              address: sc.customer.address,
+              approvalStatus: sc.approvalStatus,
+              loyaltyPoints: sc.loyaltyBalancePoints,
+              creditApproved: sc.creditApproved,
+              creditLimitMinor: sc.creditLimitMinor,
+              creditBalanceMinor: sc.creditBalanceMinor,
+              joinedAt: sc.createdAt,
+            })),
       storeId,
     };
   }
@@ -467,7 +705,7 @@ export class AdminController {
   @Post("customers")
   async createCustomer(
     @Req() req: Request & { user?: AuthPrincipal },
-    @Body() body: { name: string; phone?: string; email?: string; creditApproved?: boolean; creditLimitMinor?: number },
+    @Body() body: { name: string; phone?: string; email?: string; address?: string; creditApproved?: boolean; creditLimitMinor?: number },
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
@@ -535,7 +773,7 @@ export class AdminController {
   async updateCustomer(
     @Req() req: Request & { user?: AuthPrincipal },
     @Param("id") id: string,
-    @Body() body: { name?: string; phone?: string; email?: string; creditLimitMinor?: number },
+    @Body() body: { name?: string; phone?: string; email?: string; address?: string; creditLimitMinor?: number },
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
@@ -807,6 +1045,34 @@ export class AdminController {
     requireManage(user);
     const storeId = await this.resolveStoreId(user, headerStoreId);
     const result = await this.team.changeRole(storeId, userId, body.role);
+    if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+    return result.value;
+  }
+
+  /** POST /admin/team/:userId/reset-password — store OWNER resets their own team member's password (temp shown once, must change next login). */
+  @Post("team/:userId/reset-password")
+  async resetTeamPassword(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Param("userId") userId: string,
+    @Body() body: { newPassword?: string },
+    @Headers("x-store-id") headerStoreId?: string,
+  ) {
+    const user = req.user;
+    requireAdmin(user);
+    const storeId = await this.resolveStoreId(user, headerStoreId);
+    // OWNER (or platform) of this store only — same rule as stores/:id reset, team-scoped.
+    await this.requireStoreManager(user, storeId);
+    if (user.sub === userId) {
+      throw new HttpException({ type: "forbidden", message: "Use your own password change to update your credentials" }, HttpStatus.FORBIDDEN);
+    }
+    if (user.role === "PLATFORM_ADMIN") {
+      const target = await prisma.userStore.findUnique({ where: { userId_storeId: { userId, storeId } } });
+      if (!target) throw new HttpException({ type: "not_found", message: "Member not part of this store" }, HttpStatus.NOT_FOUND);
+      if (target.role !== "OWNER") {
+        throw new HttpException({ type: "forbidden", message: "Platform admin can only reset a store owner's password. The owner resets their own team." }, HttpStatus.FORBIDDEN);
+      }
+    }
+    const result = await this.auth.resetPassword({ userId, storeId, resetBy: user.sub, newPassword: body.newPassword });
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
     return result.value;
   }

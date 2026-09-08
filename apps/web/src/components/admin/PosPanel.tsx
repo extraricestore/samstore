@@ -305,33 +305,6 @@ export default function PosPanel({ onNavigate }: { onNavigate?: (tab: string) =>
     setUsePoints(false); setCreditSig(null); setCreditSigError(false);
   };
 
-  // ── Save as pre-order (review step quick action) ──
-  const savePreorder = async () => {
-    if (cart.length === 0) { setError("Cart is empty"); return; }
-    setBusy(true); setError(null);
-    try {
-      const customer = await ensureCustomer();
-      if (!customer) { setError("Select or add a customer for pre-orders"); setBusy(false); return; }
-      const res = await fetch(`${API_URL}/admin/pos/preorder`, {
-        method: "POST", headers: { "Content-Type": "application/json", ...adminHeaders() },
-        body: JSON.stringify({
-          items: cart.map((l) => ({ productId: l.product.id, quantity: l.quantity })),
-          customerId: customer ?? undefined,
-          startAt: undefined,
-          dueAt: undefined,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) { setError(data?.errors?.join(", ") ?? data?.message ?? "Pre-order failed"); return; }
-      toast(`Pre-order saved — ${data.orderNumber}`);
-      resetSale();
-      await load();
-      onNavigate?.("preorders");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Pre-order failed");
-    } finally { setBusy(false); }
-  };
-
   const categories = [...new Set(products.map((p) => p.category?.name).filter(Boolean))] as string[];
   const filtered = products.filter((p) => {
     const q = search.trim().toLowerCase();
@@ -495,9 +468,6 @@ export default function PosPanel({ onNavigate }: { onNavigate?: (tab: string) =>
                   <button className="btn btn-outline-secondary flex-fill" onClick={() => setStep("products")}>Back</button>
                   <button className="btn btn-warning flex-fill" disabled={cart.length === 0 || busy} onClick={hold}>
                     <i className="bi bi-pause-circle me-1"></i>Hold order
-                  </button>
-                  <button className="btn btn-outline-primary flex-fill" disabled={cart.length === 0 || busy} onClick={savePreorder}>
-                    <i className="bi bi-bag-check me-1"></i>Save as pre-order
                   </button>
                   <button className="btn btn-primary flex-fill" disabled={cart.length === 0} onClick={() => { setError(null); setStep("payment"); }}>
                     Pay <i className="bi bi-arrow-right ms-1"></i>
