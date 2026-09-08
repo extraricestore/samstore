@@ -125,19 +125,19 @@ export default function SettingsPanel() {
     }
   };
 
-  if (loading) return <p className="text-muted">Loading…</p>;
+  // ── Account: change password + edit profile (hooks MUST be before the early return) ──
+    const [curPw, setCurPw] = useState("");
+    const [newPw, setNewPw] = useState("");
+    const [pwMsg, setPwMsg] = useState<{ ok: boolean; text: string } | null>(null);
+    const [pwBusy, setPwBusy] = useState(false);
+    const [profName, setProfName] = useState("");
+      const [profEmail, setProfEmail] = useState(typeof sessionStorage !== "undefined" ? (sessionStorage.getItem("samstore.admin.email") ?? "") : "");
+    const [profMsg, setProfMsg] = useState<{ ok: boolean; text: string } | null>(null);
+    const [profBusy, setProfBusy] = useState(false);
 
-  // ── Account: change password + edit profile ──
-  const [curPw, setCurPw] = useState("");
-  const [newPw, setNewPw] = useState("");
-  const [pwMsg, setPwMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const [pwBusy, setPwBusy] = useState(false);
-  const [profName, setProfName] = useState("");
-    const [profEmail, setProfEmail] = useState(typeof sessionStorage !== "undefined" ? (sessionStorage.getItem("samstore.admin.email") ?? "") : "");
-  const [profMsg, setProfMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const [profBusy, setProfBusy] = useState(false);
+    if (loading) return <p className="text-muted">Loading…</p>;
 
-  const changePw = async () => {
+    const changePw = async () => {
     if (newPw.length < 8) { setPwMsg({ ok: false, text: "New password must be at least 8 characters." }); return; }
     setPwBusy(true); setPwMsg(null);
     try {

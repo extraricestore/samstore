@@ -278,13 +278,8 @@ export default function OrdersPanel() {
       return (
         <div className="d-flex flex-wrap gap-1 align-items-center">
           {looking(o)}
-          {/* Pending routing analysis */}
-          {o.status === "RECEIVED" && (
-            <span className={`badge ${isDeliv ? "text-bg-primary" : "text-bg-success"}`}>
-              {isDeliv ? <><i className="bi bi-truck me-1"></i>delivery</> : <><i className="bi bi-shop me-1"></i>pickup</>}
-            </span>
-          )}
-          {o.status === "ON_HOLD" && canWrite && (
+          {/* Pending routing analysis — the pill already shows delivery/pickup hint; no separate chip. */}
+                    {o.status === "ON_HOLD" && canWrite && (
             <>
               <button className="btn btn-sm btn-outline-warning" onClick={() => openEdit(o)}><i className="bi bi-pencil me-1"></i>Edit</button>
               <button className="btn btn-sm btn-success" onClick={() => { setPayHold({ id: o.id, orderNumber: o.orderNumber, totalMinor: o.totalMinor }); setPayMethod("cash"); setTendered(""); }}><i className="bi bi-cash me-1"></i>Pay</button>
@@ -347,12 +342,27 @@ export default function OrdersPanel() {
       .catch(() => setError("Could not load held order"));
   };
 
-  const looking = (o: AdminOrder) => (
-      <>
-        <span className={`badge ${STATUS_BADGE[o.status] ?? "text-bg-secondary"}`}>{o.status}</span>
-        {o.paymentMethod === "credit" && <span className="badge text-bg-warning ms-1" title="Charged to utang"><i className="bi bi-journal-text me-1"></i>utang</span>}
-      </>
-    );
+  const isDelivHint = (o: AdminOrder) => (o.deliveryType ?? "delivery") === "delivery";
+
+    const looking = (o: AdminOrder) => {
+        // Friendly, deduped status pill. The raw status is already implied by the active tab;
+        // the pill adds the delivery/pickup + payment hints without echoing "RECEIVED" next to "Receive".
+        const label: Record<string, string> = {
+          RECEIVED: "Pending", CONFIRMED: "Confirmed", PREPARING: "Preparing", READY: "Ready",
+          OUT_FOR_DELIVERY: "Out for delivery", DELIVERED: "Delivered", ON_HOLD: "On hold",
+          COMPLETED: "Completed", CANCELLED: "Cancelled", FAILED_DELIVERY: "Failed delivery",
+        };
+        const utang = o.paymentMethod === "credit";
+        return (
+          <>
+            <span className={`badge ${STATUS_BADGE[o.status] ?? "text-bg-secondary"} text-capitalize text-nowrap`}>
+              {label[o.status] ?? o.status}
+              {o.status === "RECEIVED" && isDelivHint(o) && <i className="bi bi-geo-alt ms-1"></i>}
+            </span>
+            {utang && <span className="badge text-bg-warning ms-1" title="Charged to utang"><i className="bi bi-journal-text me-1"></i>utang</span>}
+          </>
+        );
+      };
 
     /** Opens the Details modal and lazily loads the signature + line items (list endpoint omits them but the detail endpoint returns them). */
         const openDetail = (o: AdminOrder) => {
