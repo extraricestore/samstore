@@ -70,6 +70,7 @@ export default function OrdersPanel() {
   const [receiptOrder, setReceiptOrder] = useState<string | null>(null);
   const [confirmAction, setConfirmAction] = useState<{ orderId: string; kind: "void" | "refund" | "voidHold" } | null>(null);
   const [orderDetail, setOrderDetail] = useState<AdminOrder | null>(null);
+  const [detailSignature, setDetailSignature] = useState<string | null>(null);
   // On-process editing
   const [editHold, setEditHold] = useState<{ id: string; orderNumber: string; status: string; lines: EditLine[] } | null>(null);
   const [products, setProducts] = useState<ProductOption[]>([]);
@@ -316,7 +317,7 @@ export default function OrdersPanel() {
               )}
             </>
           )}
-          <button className="btn btn-sm btn-outline-secondary" title="Details" onClick={() => setOrderDetail(o)}><i className="bi bi-view-list"></i></button>
+          <button className="btn btn-sm btn-outline-secondary" title="Details" onClick={() => openDetail(o)}><i className="bi bi-view-list"></i></button>
         </div>
       );
     };
@@ -334,8 +335,21 @@ export default function OrdersPanel() {
   };
 
   const looking = (o: AdminOrder) => (
-    <span className={`badge ${STATUS_BADGE[o.status] ?? "text-bg-secondary"}`}>{o.status}</span>
-  );
+      <>
+        <span className={`badge ${STATUS_BADGE[o.status] ?? "text-bg-secondary"}`}>{o.status}</span>
+        {o.paymentMethod === "credit" && <span className="badge text-bg-warning ms-1" title="Charged to utang"><i className="bi bi-journal-text me-1"></i>utang</span>}
+      </>
+    );
+
+    /** Opens the Details modal and lazily loads the signature (list endpoint omits it but the detail endpoint returns it). */
+    const openDetail = (o: AdminOrder) => {
+      setOrderDetail(o);
+      setDetailSignature(null);
+      fetch(`${API_URL}/admin/orders/${o.id}`, { headers: adminHeaders() })
+        .then((r) => r.json())
+        .then((d) => setDetailSignature(typeof d?.signatureData === "string" ? (d.signatureData as string) : null))
+        .catch(() => setDetailSignature(null));
+    };
 
   const cardGrid = (
     <div className="d-grid gap-2 d-lg-none">
@@ -583,15 +597,30 @@ export default function OrdersPanel() {
                   <button type="button" className="btn-close" onClick={() => setOrderDetail(null)}></button>
                 </div>
                 <div className="modal-body small">
-                  <dl className="row mb-2">
-                    <dt className="col-5">Customer</dt><dd className="col-7">{orderDetail.customerName}</dd>
-                    <dt className="col-5">Phone</dt><dd className="col-7">{orderDetail.customerPhone || "—"}</dd>
-                    <dt className="col-5">Status</dt><dd className="col-7"><span className="badge text-bg-secondary">{orderDetail.status}</span></dd>
-                    <dt className="col-5">Total</dt><dd className="col-7 fw-semibold">{toPesos(orderDetail.totalMinor)}</dd>
-                    {orderDetail.paymentStatus && <><dt className="col-5">Payment</dt><dd className="col-7">{orderDetail.paymentStatus}</dd></>}
-                    {orderDetail.source && <><dt className="col-5">Source</dt><dd className="col-7">{orderDetail.source}</dd></>}
-                  </dl>
-                </div>
+                                  <dl className="row mb-2">
+                                    <dt className="col-5">Customer</dt><dd className="col-7">{orderDetail.customerName}</dd>
+                                    <dt className="col-5">Phone</dt><dd className="col-7">{orderDetail.customerPhone || "—"}</dd>
+                                    <dt className="col-5">Status</dt><dd className="col-7"><span className="badge text-bg-secondary">{orderDetail.status}</span></dd>
+                                    <dt className="col-5">Total</dt><dd className="col-7 fw-semibold">{toPesos(orderDetail.totalMinor)}</dd>
+                                    {orderDetail.paymentStatus && <><dt className="col-5">Payment</dt><dd className="col-7">{orderDetail.paymentStatus}</dd></>}
+                                    {orderDetail.paymentMethod && (
+                                      <><dt className="col-5">Method</dt><dd className="col-7">{orderDetail.paymentMethod === "credit" ? <><i className="bi bi-journal-text me-1 text-warning"></i>Utang (credit)</> : orderDetail.paymentMethod}</dd></>
+                                    )}
+                                    {orderDetail.source && <><dt className="col-5">Source</dt><dd className="col-7">{orderDetail.source}</dd></>}
+                                  </dl>
+                                  {orderDetail.paymentMethod === "credit" && (
+                                    <div className="border rounded p-2 bg-light">
+                                      <div className="fw-semibold small mb-1"><i className="bi bi-pen me-1"></i>Customer signature</div>
+                                      {detailSignature === null ? (
+                                        <p className="text-muted small mb-0">Loading signature…</p>
+                                      ) : detailSignature ? (
+                                        <img src={detailSignature} alt="Customer signature" className="border rounded w-100" style={{ maxHeight: 140, objectFit: "contain", background: "#fff" }} />
+                                      ) : (
+                                        <p className="text-muted small mb-0">No signature on file.</p>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
                 <div className="modal-footer">
                   <button className="btn btn-outline-secondary btn-sm" onClick={() => setOrderDetail(null)}>Close</button>
                 </div>

@@ -31,6 +31,9 @@ export interface AdminOrder {
   paymentStatus?: string;
   source?: string;
   deliveryType?: string;
+  paymentMethod?: string;
+  signatureData?: string;
+  signatureAt?: string;
 }
 
 /** Loads the admin token from session storage (client-side only). */
@@ -83,6 +86,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Sell",
     items: [
       { id: "pos", label: "POS", icon: "bi-cash-register" },
+      { id: "preorders", label: "Pre Order", icon: "bi-bag-check" },
     ],
   },
   {
@@ -123,10 +127,10 @@ export const NAV_GROUPS: NavGroup[] = [
 
 /** Tab visibility per staff role (GET-level permissions from live API probes). */
 export const TABS_BY_ROLE: Record<string, string[]> = {
-  STORE_OWNER: ["overview", "pos", "orders", "utang", "products", "inventory", "expenses", "purchases", "team", "customers", "vouchers", "analytics", "reports", "settings", "storelink", "warehouses", "stores", "maintenance"],
-  PLATFORM_ADMIN: ["overview", "pos", "orders", "utang", "products", "inventory", "expenses", "purchases", "team", "customers", "vouchers", "analytics", "reports", "settings", "storelink", "warehouses", "stores", "maintenance"],
-  MANAGER: ["overview", "pos", "orders", "utang", "products", "inventory", "expenses", "purchases", "team", "customers", "vouchers", "analytics", "reports", "settings", "warehouses", "maintenance"],
-  STAFF: ["overview", "pos", "orders", "utang", "products", "inventory", "expenses", "purchases", "team", "customers", "vouchers", "analytics", "reports", "settings", "warehouses", "maintenance"],
+  STORE_OWNER: ["overview", "pos", "preorders", "orders", "utang", "products", "inventory", "expenses", "purchases", "team", "customers", "vouchers", "analytics", "reports", "settings", "storelink", "warehouses", "stores", "maintenance"],
+  PLATFORM_ADMIN: ["overview", "pos", "preorders", "orders", "utang", "products", "inventory", "expenses", "purchases", "team", "customers", "vouchers", "analytics", "reports", "settings", "storelink", "warehouses", "stores", "maintenance"],
+  MANAGER: ["overview", "pos", "preorders", "orders", "utang", "products", "inventory", "expenses", "purchases", "team", "customers", "vouchers", "analytics", "reports", "settings", "warehouses", "maintenance"],
+  STAFF: ["overview", "pos", "preorders", "orders", "utang", "products", "inventory", "expenses", "purchases", "team", "customers", "vouchers", "analytics", "reports", "settings", "warehouses", "maintenance"],
   SALES_AGENT: ["orders", "team", "reports"],
   DELIVERY: [],
 };

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { API_URL } from "../../config";
 import { adminHeaders } from "../../lib/admin";
+import { toast } from "../../lib/toast";
 
 interface CustomerRow {
   id: string;
@@ -31,6 +32,12 @@ interface ProfileData {
   creditEntries: { id: string; type: string; amountMinor: number; note: string | null; orderId: string | null; createdAt: string }[];
 }
 
+interface LoyaltyTarget {
+  id: string;
+  name: string | null;
+  loyaltyPoints: number;
+}
+
 const APPROVAL_BADGE: Record<string, string> = {
   NOT_REQUIRED: "text-bg-secondary",
   PENDING: "text-bg-warning",
@@ -40,6 +47,22 @@ const APPROVAL_BADGE: Record<string, string> = {
 };
 
 const toPesos = (m: number) => `₱${(m / 100).toFixed(2)}`;
+
+const apiError = (d: unknown, fallback: string): string => {
+  if (!d || typeof d !== "object") return fallback;
+  const o = d as { message?: unknown; errors?: unknown };
+  if (typeof o.message === "string" && o.message) return o.message;
+  if (Array.isArray(o.errors) && o.errors.length > 0) {
+    return o.errors.map((e) => (typeof e === "string" ? e : JSON.stringify(e))).join(", ");
+  }
+  return fallback;
+};
+
+/** Parses a ₱ amount input into integer minor units; null when blank/invalid/negative. */
+const parseLimitMinor = (s: string): number | null => {
+  const v = parseFloat(s);
+  return Number.isFinite(v) && v >= 0 ? Math.round(v * 100) : null;
+};
 
 export default function CustomersPanel() {
   const [customers, setCustomers] = useState<CustomerRow[]>([]);
@@ -52,6 +75,32 @@ export default function CustomersPanel() {
   const [limitInput, setLimitInput] = useState("");
   const [profileTarget, setProfileTarget] = useState<string | null>(null);
   const [profile, setProfile] = useState<ProfileData | null>(null);
+
+  // Add customer modal
+  const [showAdd, setShowAdd] = useState(false);
+  const [addName, setAddName] = useState("");
+  const [addPhone, setAddPhone] = useState("");
+  const [addEmail, setAddEmail] = useState("");
+  const [addPreapprove, setAddPreapprove] = useState(false);
+  const [addLimit, setAddLimit] = useState("");
+  const [addError, setAddError] = useState<string | null>(null);
+  const [addSaving, setAddSaving] = useState(false);
+
+  // Edit customer modal
+  const [editTarget, setEditTarget] = useState<CustomerRow | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editLimit, setEditLimit] = useState("");
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
+
+  // Loyalty adjust modal
+  const [loyaltyTarget, setLoyaltyTarget] = useState<LoyaltyTarget | null>(null);
+  const [loyaltyDelta, setLoyaltyDelta] = useState("");
+  const [loyaltyNote, setLoyaltyNote] = useState("");
+  const [loyaltyError, setLoyaltyError] = useState<string | null>(null);
+  const [loyaltySaving, setLoyaltySaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -113,13 +162,145 @@ export default function CustomersPanel() {
     window.open(`${API_URL}/admin/customers/export.csv`, "_blank");
   };
 
+  // ── Add customer ──────────────────────────────────────────────────────────
+  const openAdd = () => {
+    setAddName("");
+    setAddPhone("");
+    setAddEmail("");
+    setAddPreapprove(false);
+    setAddLimit("");
+    setAddError(null);
+    setShowAdd(true);
+  };
+
+  const addCustomer = async () => {
+    if (!addName.trim()) { setAddError("Name is required."); return; }
+    const creditLimitMinor = addPreapprove ? parseLimitMinor(addLimit) : null;
+    if (addPreapprove && creditLimitMinor === null) { setAddError("Enter a valid credit limit (₱)."); return; }
+    setAddSaving(true);
+    setAddError(null);
+    try {
+      const body: Record<string, unknown> = { name: addName.trim() };
+      if (addPhone.trim()) body.phone = addPhone.trim();
+      if (addEmail.trim()) body.email = addEmail.trim();
+      if (addPreapprove) {
+        body.creditApproved = true;
+        body.creditLimitMinor = creditLimitMinor;
+      }
+      const res = await fetch(`${API_URL}/admin/customers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...adminHeaders() },
+        body: JSON.stringify(body),
+      });
+      const d = await res.json().catch(() => null);
+      if (res.ok) {
+        setShowAdd(false);
+        toast("Customer added");
+        await load();
+      } else {
+        setAddError(apiError(d, "Could not add customer"));
+      }
+    } catch {
+      setAddError("Network error — could not add customer.");
+    } finally {
+      setAddSaving(false);
+    }
+  };
+
+  // ── Edit customer ─────────────────────────────────────────────────────────
+  const openEdit = (c: CustomerRow) => {
+    setEditTarget(c);
+    setEditName(c.name ?? "");
+    setEditPhone(c.phone ?? "");
+    setEditEmail(c.email ?? "");
+    setEditLimit(Number.isFinite(c.creditLimitMinor) ? (c.creditLimitMinor / 100).toFixed(2) : "");
+    setEditError(null);
+  };
+
+  const saveEdit = async () => {
+    if (!editTarget) return;
+    if (!editName.trim()) { setEditError("Name is required."); return; }
+    const creditLimitMinor = parseLimitMinor(editLimit);
+    if (creditLimitMinor === null) { setEditError("Enter a valid credit limit (₱)."); return; }
+    setEditSaving(true);
+    setEditError(null);
+    try {
+      const body: Record<string, unknown> = { name: editName.trim(), creditLimitMinor };
+      if (editPhone.trim()) body.phone = editPhone.trim();
+      if (editEmail.trim()) body.email = editEmail.trim();
+      const res = await fetch(`${API_URL}/admin/customers/${editTarget.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...adminHeaders() },
+        body: JSON.stringify(body),
+      });
+      const d = await res.json().catch(() => null);
+      if (res.ok) {
+        setEditTarget(null);
+        toast("Customer updated");
+        await load();
+      } else {
+        setEditError(apiError(d, "Could not update customer"));
+      }
+    } catch {
+      setEditError("Network error — could not update customer.");
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  // ── Loyalty points adjust ─────────────────────────────────────────────────
+  const openLoyalty = (t: LoyaltyTarget) => {
+    setLoyaltyTarget(t);
+    setLoyaltyDelta("");
+    setLoyaltyNote("");
+    setLoyaltyError(null);
+  };
+
+  const adjustLoyalty = async () => {
+    if (!loyaltyTarget) return;
+    const delta = parseInt(loyaltyDelta.trim(), 10);
+    if (!Number.isFinite(delta) || delta === 0) {
+      setLoyaltyError("Enter a non-zero signed amount, e.g. +50 or -20.");
+      return;
+    }
+    if (!loyaltyNote.trim()) { setLoyaltyError("A reason / note is required."); return; }
+    setLoyaltySaving(true);
+    setLoyaltyError(null);
+    try {
+      const res = await fetch(`${API_URL}/admin/customers/${loyaltyTarget.id}/loyalty/adjust`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...adminHeaders() },
+        body: JSON.stringify({ delta, note: loyaltyNote.trim() }),
+      });
+      const d = await res.json().catch(() => null);
+      if (res.ok) {
+        const balanceAfter = typeof d?.balanceAfter === "number" ? d.balanceAfter : null;
+        setLoyaltyTarget(null);
+        if (profile && balanceAfter !== null) setProfile({ ...profile, loyaltyBalancePoints: balanceAfter });
+        toast(balanceAfter !== null ? `Points adjusted — balance ${balanceAfter}` : "Points adjusted");
+        await load();
+      } else {
+        setLoyaltyError(apiError(d, "Could not adjust points"));
+      }
+    } catch {
+      setLoyaltyError("Network error — could not adjust points.");
+    } finally {
+      setLoyaltySaving(false);
+    }
+  };
+
   return (
     <div>
-      <div className="d-flex justify-content-between align-items-center mb-3">
+      <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
         <h1 className="h4 mb-0">Customers &amp; Loyalty</h1>
-        <button className="btn btn-outline-secondary btn-sm" onClick={exportCsv}>
-          <i className="bi bi-filetype-csv me-1"></i>Export CSV
-        </button>
+        <div className="d-flex gap-2">
+          <button className="btn btn-primary btn-sm" onClick={openAdd}>
+            <i className="bi bi-plus-lg me-1"></i>Add customer
+          </button>
+          <button className="btn btn-outline-secondary btn-sm" onClick={exportCsv}>
+            <i className="bi bi-filetype-csv me-1"></i>Export CSV
+          </button>
+        </div>
       </div>
       {error && <div className="alert alert-danger py-2 small">{error}</div>}
 
@@ -161,12 +342,32 @@ export default function CustomersPanel() {
           <tbody>
             {customers.map((c) => (
               <tr key={c.id} style={{ cursor: "pointer" }} onClick={() => openProfile(c.id)}>
-                <td className="fw-semibold">{c.name ?? c.email ?? c.phone ?? "Guest"}</td>
+                <td>
+                  <div className="d-flex align-items-center">
+                    <span className="fw-semibold">{c.name ?? c.email ?? c.phone ?? "Guest"}</span>
+                    <button
+                      className="btn btn-sm btn-outline-secondary ms-1"
+                      title="Edit customer"
+                      onClick={(e) => { e.stopPropagation(); openEdit(c); }}
+                    >
+                      <i className="bi bi-pencil"></i>
+                    </button>
+                  </div>
+                </td>
                 <td className="small text-muted">{c.email ?? c.phone ?? "—"}</td>
                 <td className="text-end">
-                  <span className={`fw-semibold ${c.loyaltyPoints > 0 ? "text-primary" : "text-muted"}`}>
-                    {c.loyaltyPoints} pts
-                  </span>
+                  <div className="d-flex justify-content-end align-items-center gap-1">
+                    <span className={`fw-semibold ${c.loyaltyPoints > 0 ? "text-primary" : "text-muted"}`}>
+                      {c.loyaltyPoints} pts
+                    </span>
+                    <button
+                      className="btn btn-sm btn-outline-secondary"
+                      title="Adjust loyalty points"
+                      onClick={(e) => { e.stopPropagation(); openLoyalty({ id: c.id, name: c.name, loyaltyPoints: c.loyaltyPoints }); }}
+                    >
+                      <i className="bi bi-plus-slash-minus"></i>
+                    </button>
+                  </div>
                 </td>
                 <td><span className="badge text-bg-secondary">{c.approvalStatus}</span></td>
                 <td>
@@ -195,6 +396,107 @@ export default function CustomersPanel() {
             ))}
           </tbody>
         </table>
+      )}
+
+      {/* Add customer modal */}
+      {showAdd && (
+        <>
+          <div className="modal fade show d-block" tabIndex={-1}>
+            <div className="modal-dialog modal-dialog-centered">
+              <div className="modal-content">
+                <div className="modal-header">
+                  <h5 className="modal-title">Add customer</h5>
+                  <button type="button" className="btn-close" onClick={() => setShowAdd(false)}></button>
+                </div>
+                <div className="modal-body">
+                  {addError && <div className="alert alert-danger py-2 small mb-2">{addError}</div>}
+                  <label className="form-label small">Name <span className="text-danger">*</span></label>
+                  <input className="form-control" value={addName} onChange={(e) => setAddName(e.target.value)} placeholder="Customer name" />
+                  <label className="form-label small mt-2">Phone</label>
+                  <input className="form-control" value={addPhone} onChange={(e) => setAddPhone(e.target.value)} placeholder="Optional" />
+                  <label className="form-label small mt-2">Email</label>
+                  <input className="form-control" type="email" value={addEmail} onChange={(e) => setAddEmail(e.target.value)} placeholder="Optional" />
+                  <div className="form-check form-switch mt-3">
+                    <input className="form-check-input" type="checkbox" id="addPreapprove" checked={addPreapprove} onChange={(e) => setAddPreapprove(e.target.checked)} />
+                    <label className="form-check-label small" htmlFor="addPreapprove">Pre-approve credit</label>
+                  </div>
+                  {addPreapprove && (
+                    <>
+                      <label className="form-label small mt-2">Credit limit (₱)</label>
+                      <input className="form-control" type="number" min="0" step="0.01" value={addLimit} onChange={(e) => setAddLimit(e.target.value)} placeholder="e.g. 500" />
+                    </>
+                  )}
+                </div>
+                <div className="modal-footer">
+                  <button className="btn btn-outline-secondary" onClick={() => setShowAdd(false)}>Cancel</button>
+                  <button className="btn btn-primary" disabled={addSaving} onClick={addCustomer}>{addSaving ? "Saving…" : "Add customer"}</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="modal-backdrop fade show"></div>
+        </>
+      )}
+
+      {/* Edit customer modal */}
+      {editTarget && (
+        <>
+          <div className="modal fade show d-block" tabIndex={-1}>
+            <div className="modal-dialog modal-dialog-centered">
+              <div className="modal-content">
+                <div className="modal-header">
+                  <h5 className="modal-title">Edit customer — {editTarget.name ?? editTarget.email ?? "Customer"}</h5>
+                  <button type="button" className="btn-close" onClick={() => setEditTarget(null)}></button>
+                </div>
+                <div className="modal-body">
+                  {editError && <div className="alert alert-danger py-2 small mb-2">{editError}</div>}
+                  <label className="form-label small">Name <span className="text-danger">*</span></label>
+                  <input className="form-control" value={editName} onChange={(e) => setEditName(e.target.value)} placeholder="Customer name" />
+                  <label className="form-label small mt-2">Phone</label>
+                  <input className="form-control" value={editPhone} onChange={(e) => setEditPhone(e.target.value)} placeholder="Optional" />
+                  <label className="form-label small mt-2">Email</label>
+                  <input className="form-control" type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} placeholder="Optional" />
+                  <label className="form-label small mt-2">Credit limit (₱)</label>
+                  <input className="form-control" type="number" min="0" step="0.01" value={editLimit} onChange={(e) => setEditLimit(e.target.value)} placeholder="e.g. 500" />
+                </div>
+                <div className="modal-footer">
+                  <button className="btn btn-outline-secondary" onClick={() => setEditTarget(null)}>Cancel</button>
+                  <button className="btn btn-primary" disabled={editSaving} onClick={saveEdit}>{editSaving ? "Saving…" : "Save changes"}</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="modal-backdrop fade show"></div>
+        </>
+      )}
+
+      {/* Loyalty adjust modal */}
+      {loyaltyTarget && (
+        <>
+          <div className="modal fade show d-block" tabIndex={-1}>
+            <div className="modal-dialog modal-dialog-centered">
+              <div className="modal-content">
+                <div className="modal-header">
+                  <h5 className="modal-title">Adjust points — {loyaltyTarget.name ?? "Customer"}</h5>
+                  <button type="button" className="btn-close" onClick={() => setLoyaltyTarget(null)}></button>
+                </div>
+                <div className="modal-body">
+                  {loyaltyError && <div className="alert alert-danger py-2 small mb-2">{loyaltyError}</div>}
+                  <p className="small text-muted mb-2">Current balance: <strong>{loyaltyTarget.loyaltyPoints} pts</strong></p>
+                  <label className="form-label small">Points to add / deduct <span className="text-danger">*</span></label>
+                  <input className="form-control" inputMode="numeric" value={loyaltyDelta} onChange={(e) => setLoyaltyDelta(e.target.value)} placeholder="e.g. +50 or -20" />
+                  <label className="form-label small mt-2">Reason / note <span className="text-danger">*</span></label>
+                  <input className="form-control" value={loyaltyNote} onChange={(e) => setLoyaltyNote(e.target.value)} placeholder="e.g. Birthday bonus" />
+                </div>
+                <div className="modal-footer">
+                  <button className="btn btn-outline-secondary" onClick={() => setLoyaltyTarget(null)}>Cancel</button>
+                  <button className="btn btn-primary" disabled={loyaltySaving} onClick={adjustLoyalty}>{loyaltySaving ? "Adjusting…" : "Adjust points"}</button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="modal-backdrop fade show"></div>
+        </>
       )}
 
       {/* Approve credit modal */}
@@ -231,7 +533,18 @@ export default function CustomersPanel() {
               <div className="modal-content">
                 <div className="modal-header">
                   <h5 className="modal-title">Customer — {profile?.customer.name ?? profile?.customer.email ?? "…"}</h5>
-                  <button type="button" className="btn-close" onClick={() => setProfileTarget(null)}></button>
+                  <div className="d-flex align-items-center gap-2">
+                    <button
+                      className="btn btn-outline-primary btn-sm"
+                      onClick={() => {
+                        if (!profile) return;
+                        openLoyalty({ id: profile.customer.id, name: profile.customer.name, loyaltyPoints: profile.loyaltyBalancePoints });
+                      }}
+                    >
+                      <i className="bi bi-plus-slash-minus me-1"></i>Adjust points
+                    </button>
+                    <button type="button" className="btn-close" onClick={() => setProfileTarget(null)}></button>
+                  </div>
                 </div>
                 <div className="modal-body">
                   {!profile && <p className="text-muted">Loading…</p>}

@@ -5,6 +5,7 @@
 
 import { prisma } from "../persistence/prisma-repositories.js";
 import type { ApiError } from "@sam-store/contracts";
+import { cacheBust, cacheKey } from "../persistence/ttl-cache.js";
 
 export type PurchaseResult<T> = { ok: true; value: T } | { ok: false; error: ApiError };
 
@@ -76,6 +77,7 @@ export class PurchasesService {
       }
       return p;
     });
+    cacheBust(cacheKey("products", storeId));
 
     return { ok: true, value: { id: purchase.id, totalCostMinor } };
   }

@@ -20,6 +20,8 @@ interface ReceiptData {
   paymentStatus: string;
   customerName: string;
   createdAt: string;
+  signatureData?: string;
+  signatureAt?: string;
   items: { productName: string; sku: string; unitPriceMinor: number; quantity: number; lineTotalMinor: number }[];
   payments: { id: string; method: string; amountMinor: number; changeMinor: number; type: string; note: string | null; receivedAt: string }[];
 }
@@ -104,6 +106,12 @@ export default function ReceiptModal({ orderId, onClose }: { orderId: string; on
                         {p.note && <span className="small"> ({p.note})</span>}
                       </div>
                     ))}
+                    {data.signatureData && (
+                      <div className="text-center small text-muted mt-2">
+                        <img src={data.signatureData} alt="Customer signature" style={{ maxWidth: "100%", maxHeight: 90 }} />
+                        <div>Customer signature</div>
+                      </div>
+                    )}
                   </div>
                   {settings?.receiptFooter && (
                     <div className="text-center small text-muted mt-2">{settings.receiptFooter}</div>

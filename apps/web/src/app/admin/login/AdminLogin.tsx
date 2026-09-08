@@ -56,12 +56,14 @@ export default function AdminLogin() {
           <div className="alert alert-light border small mb-3">
             <div className="fw-semibold small mb-1"><i className="bi bi-info-circle me-1"></i>Demo accounts — tap to fill</div>
             <div className="d-flex flex-wrap gap-1">
-              {(  [
+              {([
                 ["Owner", "admin@samstore.test", "admin-pass-123"],
                 ["Manager", "manager@samstore.test", "manager-pass-123"],
                 ["Staff", "staff@samstore.test", "staff-pass-123"],
                 ["Agent", "agent@samstore.test", "agent-pass-123"],
                 ["Delivery", "delivery@samstore.test", "delivery-pass-123"],
+                ["Customer", "customer@samstore.test", "customer-pass-123"],
+                ["Platform", "platform@samstore.test", "platform-pass-123"],
               ] as [string, string, string][]).map(([label, em, pw]) => (
                 <button
                   key={em}
@@ -73,7 +75,7 @@ export default function AdminLogin() {
                 </button>
               ))}
             </div>
-            <div className="text-muted small mt-1">Passwords shown for local demo only.</div>
+            <div className="text-muted small mt-1">Passwords shown for local demo only. Delivery opens the courier app; Customer is the storefront account.</div>
           </div>
 
           <form onSubmit={login}>

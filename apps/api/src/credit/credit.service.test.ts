@@ -28,7 +28,15 @@ test("recordPayment rejects non-positive", async () => {
 });
 
 test("recordPayment unknown customer → not_found", async () => {
-  const r = await svc.recordPayment("s1", "nope", 100, "x", "a");
+  const r = await svc.recordPayment("s1", "nope", 100, "x", "a", "data:image/png;base64,abc");
   assert.equal(r.ok, false);
   if (!r.ok) assert.equal(r.error.type, "not_found");
+});
+
+test("recordPayment requires signature (v4)", async () => {
+  for (const bad of [undefined, "", "   ", "not-an-image"]) {
+    const r = await svc.recordPayment("s1", "sc1", 100, "x", "a", bad);
+    assert.equal(r.ok, false);
+    if (!r.ok) assert.ok(JSON.stringify(r.error).includes("Signature is required"));
+  }
 });

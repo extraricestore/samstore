@@ -388,6 +388,8 @@ model Payment {
   type        String   @default("payment") // payment | refund | void
   note        String?
   createdBy   String? // actor user id
+  signatureData String? // v4: finger-drawn signature (data-URL PNG) for utang collections
+  signatureAt   DateTime? // v4: when the signature was captured
 
   @@index([storeId, receivedAt])
   @@index([orderId])

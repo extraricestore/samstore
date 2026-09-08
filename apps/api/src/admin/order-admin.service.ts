@@ -1,6 +1,7 @@
 // Order admin service — status transitions with the state machine + audit history.
 
 import { prisma } from "../persistence/prisma-repositories.js";
+import { cacheBust, cacheKey } from "../persistence/ttl-cache.js";
 import { assertTransition, paymentEffectFor, type OrderState } from "../domain/order-state.js";
 import { computeOrderTotals } from "../domain/pricing.js";
 import { LoyaltyService } from "../loyalty/loyalty.service.js";
@@ -67,7 +68,7 @@ export class OrderAdminService {
         data: { orderNumber: order.orderNumber, status: toStatus },
       });
     }
-
+    cacheBust(cacheKey("orders", storeId));
     return { ok: true, value: { id: orderId, status: toStatus } };
   }
 
@@ -172,7 +173,8 @@ export class OrderAdminService {
         data: { orderId, storeId, fromStatus: order.status, toStatus: order.status, reason: "items edited", actorType: "admin", actorId: null },
       });
     });
-
+    cacheBust(cacheKey("products", storeId));
+    cacheBust(cacheKey("orders", storeId));
     return { ok: true, value: { id: orderId, status: order.status, totalMinor: totals.totalMinor + order.deliveryFeeMinor - order.discountMinor } };
   }
 
@@ -198,6 +200,7 @@ export class OrderAdminService {
         });
       }
     });
+    cacheBust(cacheKey("orders", storeId));
     return { ok: true, value: { id: orderId, status: "OUT_FOR_DELIVERY" } };
   }
 
@@ -217,6 +220,7 @@ export class OrderAdminService {
         data: { orderId, storeId, fromStatus: order.status, toStatus: "COMPLETED", reason: "move-to-completed (pickup)", actorType: "admin", actorId: null },
       });
     });
+    cacheBust(cacheKey("orders", storeId));
     return { ok: true, value: { id: orderId, status: "COMPLETED" } };
   }
 }

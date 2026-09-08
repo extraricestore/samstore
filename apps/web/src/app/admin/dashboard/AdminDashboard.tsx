@@ -19,6 +19,7 @@ import MaintenancePanel from "../../../components/admin/MaintenancePanel";
 import TeamPanel from "../../../components/admin/TeamPanel";
 import WarehousesPanel from "../../../components/admin/WarehousesPanel";
 import PosPanel from "../../../components/admin/PosPanel";
+import PreOrdersPanel from "../../../components/admin/PreOrdersPanel";
 import UtangPanel from "../../../components/admin/UtangPanel";
 import ExpensesPanel from "../../../components/admin/ExpensesPanel";
 import PurchasesPanel from "../../../components/admin/PurchasesPanel";
@@ -89,7 +90,8 @@ export default function AdminDashboard() {
   const renderTab = () => {
     switch (tab) {
       case "overview": return <OverviewPanel onNavigate={setTab} storeSlug={active?.slug} storeName={active?.name} />;
-      case "pos": return <PosPanel />;
+      case "pos": return <PosPanel onNavigate={setTab} />;
+      case "preorders": return <PreOrdersPanel onNavigate={setTab} />;
       case "utang": return <UtangPanel />;
       case "inventory": return <InventoryPanel />;
       case "expenses": return <ExpensesPanel />;

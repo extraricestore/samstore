@@ -20,6 +20,19 @@ function statusFor(error: ApiError): HttpStatus {
   }
 }
 
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Parse an ISO date query param; date-only `to` bounds are inclusive through the whole UTC day. */
+function parseDateBound(value: string | undefined, name: string, endOfDay = false): Date | undefined {
+  if (value === undefined || value === "") return undefined;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) {
+    throw new HttpException({ type: "validation", errors: [`${name} must be a valid ISO date`] }, HttpStatus.UNPROCESSABLE_ENTITY);
+  }
+  if (endOfDay && DATE_ONLY.test(value)) d.setTime(d.getTime() + 86_399_999);
+  return d;
+}
+
 @Controller("admin")
 @UseGuards(JwtAuthGuard)
 export class CreditController {
@@ -57,23 +70,44 @@ export class CreditController {
     return result.value;
   }
 
-  /** GET /admin/credit/utang?status=unpaid|paid — customers with credit history. */
+  /** GET /admin/credit/utang?status=unpaid|paid&search=&from=&to= — customers with credit history. */
   @Get("credit/utang")
-  async utangList(@Req() req: Request & { user?: AuthPrincipal }, @Query("status") status?: string, @Headers("x-store-id") headerStoreId?: string) {
+  async utangList(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Query("status") status?: string,
+    @Query("search") search?: string,
+    @Query("from") from?: string,
+    @Query("to") to?: string,
+    @Headers("x-store-id") headerStoreId?: string,
+  ) {
     const user = req.user;
     if (!user || !ADMIN_ROLES.includes(user.role)) throw new HttpException({ type: "forbidden", message: "Not authorized" }, HttpStatus.FORBIDDEN);
     const storeId = await this.resolveStore(user, headerStoreId);
     const s = status === "paid" ? "paid" : "unpaid";
-    return { customers: await this.creditSvc.utangList(storeId, s), storeId };
+    const filters = {
+      search,
+      from: parseDateBound(from, "from"),
+      to: parseDateBound(to, "to", true),
+    };
+    return { customers: await this.creditSvc.utangList(storeId, s, filters), storeId };
   }
 
-  /** GET /admin/credit/:storeCustomerId — ledger for one customer. */
+  /** GET /admin/credit/:storeCustomerId?from=&to= — ledger for one customer. */
   @Get("credit/:storeCustomerId")
-  async customerCredit(@Req() req: Request & { user?: AuthPrincipal }, @Param("storeCustomerId") storeCustomerId: string, @Headers("x-store-id") headerStoreId?: string) {
+  async customerCredit(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Param("storeCustomerId") storeCustomerId: string,
+    @Query("from") from?: string,
+    @Query("to") to?: string,
+    @Headers("x-store-id") headerStoreId?: string,
+  ) {
     const user = req.user;
     if (!user || !ADMIN_ROLES.includes(user.role)) throw new HttpException({ type: "forbidden", message: "Not authorized" }, HttpStatus.FORBIDDEN);
     const storeId = await this.resolveStore(user, headerStoreId);
-    const data = await this.creditSvc.customerCredit(storeId, storeCustomerId);
+    const data = await this.creditSvc.customerCredit(storeId, storeCustomerId, {
+      from: parseDateBound(from, "from"),
+      to: parseDateBound(to, "to", true),
+    });
     if (!data) throw new HttpException({ type: "not_found", message: "Customer not found" }, HttpStatus.NOT_FOUND);
     return data;
   }
@@ -83,13 +117,13 @@ export class CreditController {
   async recordPayment(
     @Req() req: Request & { user?: AuthPrincipal },
     @Param("storeCustomerId") storeCustomerId: string,
-    @Body() body: { amountMinor: number; note?: string },
+    @Body() body: { amountMinor: number; note?: string; signatureData?: string },
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
     if (!user || !ADMIN_ROLES.includes(user.role)) throw new HttpException({ type: "forbidden", message: "Not authorized" }, HttpStatus.FORBIDDEN);
     const storeId = await this.resolveStore(user, headerStoreId);
-    const result = await this.creditSvc.recordPayment(storeId, storeCustomerId, body.amountMinor, body.note, user.sub);
+    const result = await this.creditSvc.recordPayment(storeId, storeCustomerId, body.amountMinor, body.note, user.sub, body.signatureData);
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
     return result.value;
   }

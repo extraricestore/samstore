@@ -1,5 +1,5 @@
-import { Body, Controller, Get, Headers, HttpException, HttpStatus, Inject, Param, Patch, Post, Req, UseGuards } from "@nestjs/common";
-import type { ApiError, PosSellRequest, PosHoldRequest, PosHoldItemsRequest, PosHoldCompleteRequest } from "@sam-store/contracts";
+import { Body, Controller, Get, Headers, HttpException, HttpStatus, Inject, Param, Patch, Post, Query, Req, UseGuards } from "@nestjs/common";
+import type { ApiError, PosSellRequest, PosHoldRequest, PosHoldItemsRequest, PosHoldCompleteRequest, PreOrderCreateRequest, PreOrderFinalizeRequest } from "@sam-store/contracts";
 import { JwtAuthGuard, type AuthPrincipal } from "../auth/auth.guard.js";
 import { prisma } from "../persistence/prisma-repositories.js";
 import { POS_SERVICE, PosService } from "./pos.service.js";
@@ -66,12 +66,40 @@ export class PosController {
     return { ...result.value, storeId };
   }
 
-  /** GET /admin/pos/holds — current ON_HOLD orders. */
+  /** GET /admin/pos/holds — current ON_HOLD orders (pos holds only, pre-orders excluded). */
   @Get("holds")
   async holds(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
     const user = req.user!;
     const storeId = await this.guardAndStore(req, headerStoreId);
     return { holds: await this.pos.listHolds(storeId), storeId };
+  }
+
+  /** POST /admin/pos/preorder — create a v4 pre-order draft (customer required, stock reserved). */
+  @Post("preorder")
+  async createPreOrder(@Req() req: Request & { user?: AuthPrincipal }, @Body() body: PreOrderCreateRequest, @Headers("x-store-id") headerStoreId?: string) {
+    const user = req.user!;
+    const storeId = await this.guardAndStore(req, headerStoreId);
+    const result = await this.pos.createPreOrder(storeId, user.sub, body);
+    if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+    return { ...result.value, storeId };
+  }
+
+  /** GET /admin/pos/preorders — pre-order drafts (optional from/to createdAt ISO filters). */
+  @Get("preorders")
+  async preorders(@Req() req: Request & { user?: AuthPrincipal }, @Query("from") from?: string, @Query("to") to?: string, @Headers("x-store-id") headerStoreId?: string) {
+    const user = req.user!;
+    const storeId = await this.guardAndStore(req, headerStoreId);
+    return { preorders: await this.pos.listPreorders(storeId, from, to), storeId };
+  }
+
+  /** POST /admin/pos/preorders/:id/finalize — utang finalize: signature REQUIRED → COMPLETED + CreditEntry. */
+  @Post("preorders/:id/finalize")
+  async finalizePreorder(@Req() req: Request & { user?: AuthPrincipal }, @Param("id") id: string, @Body() body: PreOrderFinalizeRequest, @Headers("x-store-id") headerStoreId?: string) {
+    const user = req.user!;
+    const storeId = await this.guardAndStore(req, headerStoreId);
+    const result = await this.pos.finalizePreorder(storeId, user.sub, id, body);
+    if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+    return { ...result.value, storeId };
   }
 
   /** PATCH /admin/pos/holds/:id/items — replace a held order's lines (stock delta, totals recomputed). */

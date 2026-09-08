@@ -4,6 +4,7 @@ import {
 import type { ApiError } from "@sam-store/contracts";
 import { JwtAuthGuard, type AuthPrincipal } from "../auth/auth.guard.js";
 import { prisma } from "../persistence/prisma-repositories.js";
+import { cacheBust, cacheKey } from "../persistence/ttl-cache.js";
 import { PAYMENTS_SERVICE, PaymentsService } from "./payments.service.js";
 
 const ADMIN_ROLES = ["STORE_OWNER", "PLATFORM_ADMIN", "MANAGER", "STAFF"];
@@ -92,6 +93,7 @@ export class PaymentsController {
     const user = req.user;
     if (!user || !MANAGE_ROLES.includes(user.role)) throw new HttpException({ type: "forbidden", message: "Owner/manager only" }, HttpStatus.FORBIDDEN);
     const storeId = await this.resolveStore(user, headerStoreId);
+    cacheBust(cacheKey("orders", storeId));
     const result = await this.paymentsSvc.voidOrder(id, storeId, user.sub, body.reason);
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
     return result.value;
@@ -108,6 +110,7 @@ export class PaymentsController {
     const user = req.user;
     if (!user || !MANAGE_ROLES.includes(user.role)) throw new HttpException({ type: "forbidden", message: "Owner/manager only" }, HttpStatus.FORBIDDEN);
     const storeId = await this.resolveStore(user, headerStoreId);
+    cacheBust(cacheKey("orders", storeId));
     const result = await this.paymentsSvc.refundOrder(id, storeId, user.sub, body.amountMinor, body.reason);
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
     return result.value;

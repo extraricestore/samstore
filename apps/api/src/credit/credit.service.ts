@@ -6,13 +6,27 @@
 // Limits: per-customer creditLimitMinor, else store settings creditLimitMinor; 0 = disabled.
 
 import { prisma } from "../persistence/prisma-repositories.js";
+import { cacheGet, cacheSet, cacheBust, cacheKey } from "../persistence/ttl-cache.js";
 import type { ApiError } from "@sam-store/contracts";
 
+/** Both ledger lists (unpaid/paid) + customers are stale after any credit write. */
+const bustLedger = (storeId: string) => {
+  cacheBust(cacheKey("credit-ledger", storeId));
+  cacheBust(cacheKey("customers", storeId));
+};
+
 export type CreditResult<T> = { ok: true; value: T } | { ok: false; error: ApiError };
+
+/** Row shape returned by utangList (Unpaid/Paid list). */
+export interface LedgerListRow {
+  id: string; customerName: string | null; phone: string | null; balanceMinor: number; creditLimitMinor: number;
+  creditApproved: boolean; firstPurchaseAt: Date | null; oldestDueAt: Date | null; daysOverdue: number; paidAt: Date | null;
+}
 
 export const CREDIT_SERVICE = Symbol("CREDIT_SERVICE");
 
 export class CreditService {
+  private readonly _prisma = prisma;
   /** Approve a store customer for utang with a limit (minor units). */
   async approveCredit(storeId: string, storeCustomerId: string, limitMinor: number, actorId: string): Promise<CreditResult<{ id: string; creditApproved: boolean; creditLimitMinor: number }>> {
     if (!Number.isInteger(limitMinor) || limitMinor < 0) {
@@ -21,24 +35,25 @@ export class CreditService {
     const sc = await prisma.storeCustomer.findFirst({ where: { storeId, id: storeCustomerId } });
     if (!sc) return { ok: false, error: { type: "not_found", message: "Customer not found in this store" } };
     const updated = await prisma.storeCustomer.update({
-      where: { id: sc.id },
-      data: { creditApproved: true, creditLimitMinor: limitMinor },
-    });
-    return { ok: true, value: { id: updated.id, creditApproved: updated.creditApproved, creditLimitMinor: updated.creditLimitMinor } };
+          where: { id: sc.id },
+          data: { creditApproved: true, creditLimitMinor: limitMinor },
+        });
+        bustLedger(storeId);
+        return { ok: true, value: { id: updated.id, creditApproved: updated.creditApproved, creditLimitMinor: updated.creditLimitMinor } };
   }
 
   /** Effective limit for a customer (per-customer override, else store default). */
   private async effectiveLimit(storeId: string, sc: { creditLimitMinor: number }): Promise<number> {
-    if (sc.creditLimitMinor > 0) return sc.creditLimitMinor;
-    const settings = await prisma.storeSettings.findUnique({ where: { storeId } });
-    return settings?.creditLimitMinor ?? 0;
-  }
+      if (sc.creditLimitMinor > 0) return sc.creditLimitMinor;
+      const settings = await this._prisma.storeSettings.findUnique({ where: { storeId } });
+      return settings?.creditLimitMinor ?? 0;
+    }
 
   /** V1: store credit term (days) for default due dates. */
   async effectiveTermDays(storeId: string): Promise<number> {
-    const settings = await prisma.storeSettings.findUnique({ where: { storeId } });
-    return settings?.creditTermDays ?? 30;
-  }
+      const settings = await this._prisma.storeSettings.findUnique({ where: { storeId } });
+      return settings?.creditTermDays ?? 30;
+    }
 
   /** V1: default dueAt from term (or an explicit dueAt). */
   private async defaultDueAt(storeId: string, startAt: Date | undefined, dueAt: string | undefined): Promise<{ start: Date; due: Date | null }> {
@@ -63,11 +78,12 @@ export class CreditService {
       data: { storeId, storeCustomerId, orderId, type: "purchase", amountMinor, startAt: start, dueAt: due, note: "POS credit sale", createdBy: actorId },
     });
     const updated = await tx.storeCustomer.update({
-      where: { id: sc.id },
-      data: { creditBalanceMinor: { increment: amountMinor } },
-    });
-    return { ok: true, value: { balanceMinor: updated.creditBalanceMinor } };
-  }
+          where: { id: sc.id },
+          data: { creditBalanceMinor: { increment: amountMinor } },
+        });
+        bustLedger(storeId);
+        return { ok: true, value: { balanceMinor: updated.creditBalanceMinor } };
+      }
 
   /** Read-only eligibility check for online credit checkout. */
   async checkCredit(storeId: string, storeCustomerId: string, amountMinor: number): Promise<{ ok: true } | { ok: false; message: string }> {
@@ -96,85 +112,120 @@ export class CreditService {
     });
   }
 
-  /** Record a cash payment against utang. */
-  async recordPayment(storeId: string, storeCustomerId: string, amountMinor: number, note: string | undefined, actorId: string): Promise<CreditResult<{ balanceMinor: number; paymentId: string }>> {
-    if (!Number.isInteger(amountMinor) || amountMinor <= 0) {
-      return { ok: false, error: { type: "validation", errors: ["amountMinor must be a positive integer"] } };
-    }
-    const sc = await prisma.storeCustomer.findFirst({ where: { storeId, id: storeCustomerId } });
-    if (!sc) return { ok: false, error: { type: "not_found", message: "Customer not found in this store" } };
-    if (sc.creditBalanceMinor <= 0) return { ok: false, error: { type: "conflict", message: "Customer has no outstanding balance" } };
-    const pay = Math.min(amountMinor, sc.creditBalanceMinor);
+  /** Record a cash payment against utang. v4: signature REQUIRED (data-URL PNG). */
+    async recordPayment(storeId: string, storeCustomerId: string, amountMinor: number, note: string | undefined, actorId: string, signatureData?: string): Promise<CreditResult<{ balanceMinor: number; paymentId: string }>> {
+      if (!Number.isInteger(amountMinor) || amountMinor <= 0) {
+        return { ok: false, error: { type: "validation", errors: ["amountMinor must be a positive integer"] } };
+      }
+      if (!signatureData || typeof signatureData !== "string" || !signatureData.trim().startsWith("data:image/") || signatureData.length > 2_000_000) {
+        return { ok: false, error: { type: "validation", errors: ["Signature is required (draw to confirm)"] } };
+      }
+      const sc = await prisma.storeCustomer.findFirst({ where: { storeId, id: storeCustomerId } });
+      if (!sc) return { ok: false, error: { type: "not_found", message: "Customer not found in this store" } };
+      if (sc.creditBalanceMinor <= 0) return { ok: false, error: { type: "conflict", message: "Customer has no outstanding balance" } };
+      const pay = Math.min(amountMinor, sc.creditBalanceMinor);
 
-    const payment = await prisma.$transaction(async (tx) => {
-      const p = await tx.payment.create({
-        data: { storeId, method: "credit", amountMinor: pay, note: note?.trim() ?? "Utang payment", type: "payment", createdBy: actorId },
-      });
-      await tx.creditEntry.create({
-        data: { storeId, storeCustomerId, type: "payment", amountMinor: -pay, note: note?.trim() ?? "Utang payment", createdBy: actorId },
-      });
+      const payment = await prisma.$transaction(async (tx) => {
+        const p = await tx.payment.create({
+          data: { storeId, method: "credit", amountMinor: pay, note: note?.trim() ?? "Utang payment", type: "payment", createdBy: actorId, signatureData },
+        });
+        await tx.creditEntry.create({
+          data: { storeId, storeCustomerId, type: "payment", amountMinor: -pay, note: note?.trim() ?? "Utang payment", createdBy: actorId },
+        });
       const updated = await tx.storeCustomer.update({
-        where: { id: sc.id },
-        data: { creditBalanceMinor: { decrement: pay } },
-      });
-      return { paymentId: p.id, balanceMinor: updated.creditBalanceMinor };
-    });
-    return { ok: true, value: payment };
-  }
+              where: { id: sc.id },
+              data: { creditBalanceMinor: { decrement: pay } },
+            });
+            return { paymentId: p.id, balanceMinor: updated.creditBalanceMinor };
+          });
+          bustLedger(storeId);
+          return { ok: true, value: payment };
+        }
 
-  /** Customers with outstanding balances (Utang list). V1: status = unpaid | paid. */
-  async utangList(storeId: string, status: "unpaid" | "paid" = "unpaid") {
-    const where: Record<string, unknown> = { storeId, credit: { some: {} } };
+  /** Customers with outstanding balances (Utang list). V1: status = unpaid | paid.
+   *  Filters: search (customer name, case-insensitive), from/to (inclusive createdAt range on CreditEntry). */
+  async utangList(storeId: string, status: "unpaid" | "paid" = "unpaid", f: { search?: string; from?: Date; to?: Date } = {}): Promise<LedgerListRow[]> {
+        const plain = !f.search && !f.from && !f.to;
+            if (plain) {
+              const hit = cacheGet<LedgerListRow[]>(cacheKey("credit-ledger", storeId, status));
+              if (hit) return hit;
+            }
+      const range: Record<string, Date> = {};
+    if (f.from) range.gte = f.from;
+    if (f.to) range.lte = f.to;
+    const where: Record<string, unknown> = {
+      storeId,
+      credit: { some: Object.keys(range).length > 0 ? { createdAt: range } : {} },
+    };
     if (status === "unpaid") where.creditBalanceMinor = { gt: 0 };
     else where.creditBalanceMinor = { equals: 0 };
+    if (f.search?.trim()) {
+      where.customer = { name: { contains: f.search.trim(), mode: "insensitive" } };
+    }
     const rows = await prisma.storeCustomer.findMany({
-      where,
-      orderBy: status === "unpaid" ? { creditBalanceMinor: "desc" } : { updatedAt: "desc" },
-      include: {
-        customer: { select: { name: true, phone: true } },
-        credit: { orderBy: { createdAt: "asc" }, select: { type: true, createdAt: true, startAt: true, dueAt: true } },
-      },
-    });
-    return rows.map((r) => {
-      const purchases = r.credit.filter((e) => e.type === "purchase");
-      const payments = r.credit.filter((e) => e.type === "payment");
-      const oldestDue = purchases.reduce<Date | null>((m, e) => (e.dueAt && (!m || e.dueAt < m) ? e.dueAt : m), null);
-      const firstPurchaseAt = purchases[0]?.startAt ?? null;
-      const paidAt = payments.length > 0 ? payments[payments.length - 1]!.createdAt : null;
-      const daysOverdue = oldestDue && oldestDue.getTime() < Date.now() ? Math.floor((Date.now() - oldestDue.getTime()) / 86_400_000) : 0;
-      return {
-        id: r.id,
-        customerName: r.customer.name,
-        phone: r.customer.phone,
-        balanceMinor: r.creditBalanceMinor,
-        creditLimitMinor: r.creditLimitMinor,
-        creditApproved: r.creditApproved,
-        firstPurchaseAt,
-        oldestDueAt: oldestDue,
-        daysOverdue,
-        paidAt,
-      };
-    });
-  }
+          where,
+          orderBy: status === "unpaid" ? { creditBalanceMinor: "desc" } : { updatedAt: "desc" },
+          include: {
+            customer: { select: { name: true, phone: true } },
+            credit: { orderBy: { createdAt: "asc" }, select: { type: true, createdAt: true, startAt: true, dueAt: true } },
+          },
+        });
+        const mapped: LedgerListRow[] = rows.map((r) => {
+          const purchases = r.credit.filter((e) => e.type === "purchase");
+          const payments = r.credit.filter((e) => e.type === "payment");
+          const oldestDue = purchases.reduce<Date | null>((m, e) => (e.dueAt && (!m || e.dueAt < m) ? e.dueAt : m), null);
+          const firstPurchaseAt = purchases[0]?.startAt ?? null;
+          const paidAt = payments.length > 0 ? payments[payments.length - 1]!.createdAt : null;
+          const daysOverdue = oldestDue && oldestDue.getTime() < Date.now() ? Math.floor((Date.now() - oldestDue.getTime()) / 86_400_000) : 0;
+          return {
+            id: r.id,
+            customerName: r.customer.name,
+            phone: r.customer.phone,
+            balanceMinor: r.creditBalanceMinor,
+            creditLimitMinor: r.creditLimitMinor,
+            creditApproved: r.creditApproved,
+            firstPurchaseAt,
+            oldestDueAt: oldestDue,
+            daysOverdue,
+            paidAt,
+          };
+        });
+        if (plain) cacheSet(cacheKey("credit-ledger", storeId, status), mapped, 15_000);
+        return mapped;
+      }
 
-  /** Full ledger for one customer. */
-  async customerCredit(storeId: string, storeCustomerId: string) {
-    const sc = await prisma.storeCustomer.findFirst({
-      where: { storeId, id: storeCustomerId },
-      include: {
-        customer: { select: { name: true, phone: true } },
-        credit: { orderBy: { createdAt: "desc" }, take: 100 },
-      },
-    });
-    if (!sc) return null;
-    return {
-      id: sc.id,
-      customerName: sc.customer.name,
-      phone: sc.customer.phone,
-      creditApproved: sc.creditApproved,
-      creditLimitMinor: sc.creditLimitMinor,
-      balanceMinor: sc.creditBalanceMinor,
-      entries: sc.credit.map((e) => ({ id: e.id, type: e.type, amountMinor: e.amountMinor, startAt: e.startAt, dueAt: e.dueAt, note: e.note, orderId: e.orderId, createdAt: e.createdAt })),
-    };
-  }
+  /** Full ledger for one customer. from/to filter the entries by createdAt (inclusive).
+     *  v4: each entry carries its signature (payment data-URL) when available. */
+    async customerCredit(storeId: string, storeCustomerId: string, opts: { from?: Date; to?: Date } = {}) {
+      const range: { gte?: Date; lte?: Date } = {};
+      if (opts.from) range.gte = opts.from;
+      if (opts.to) range.lte = opts.to;
+      const sc = await prisma.storeCustomer.findFirst({
+        where: { storeId, id: storeCustomerId },
+        include: {
+          customer: { select: { name: true, phone: true } },
+          credit: { where: { createdAt: range }, orderBy: { createdAt: "desc" }, take: 100 },
+        },
+      });
+      if (!sc) return null;
+      // Fetch signature data from the Payment rows that back the ledger's payment entries.
+      const paymentSigs = await prisma.payment.findMany({
+            where: { storeId, type: "payment", orderId: null, signatureData: { not: null } },
+            select: { id: true, signatureData: true, receivedAt: true },
+          });
+          const sigById = new Map(paymentSigs.map((p) => [p.id, p.signatureData]));
+
+      return {
+        id: sc.id,
+        customerName: sc.customer.name,
+        phone: sc.customer.phone,
+        creditApproved: sc.creditApproved,
+        creditLimitMinor: sc.creditLimitMinor,
+        balanceMinor: sc.creditBalanceMinor,
+        entries: sc.credit.map((e) => ({
+          id: e.id, type: e.type, amountMinor: e.amountMinor, startAt: e.startAt, dueAt: e.dueAt, note: e.note, orderId: e.orderId, createdAt: e.createdAt,
+          signatureData: sigById.get(e.id),
+        })),
+      };
+    }
 }

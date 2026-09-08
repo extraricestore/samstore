@@ -18,6 +18,7 @@ import {
 import type { ApiError } from "@sam-store/contracts";
 import { JwtAuthGuard, type AuthPrincipal } from "../auth/auth.guard.js";
 import { prisma } from "../persistence/prisma-repositories.js";
+import { cacheGet, cacheSet, cacheBust, cacheKey } from "../persistence/ttl-cache.js";
 import { AUTH_SERVICE, AuthService } from "../auth/auth.service.js";
 import { ProductAdminService } from "./product-admin.service.js";
 import { OrderAdminService } from "./order-admin.service.js";
@@ -177,9 +178,12 @@ export class AdminController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    requireView(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
-    const where: Record<string, unknown> = { storeId };
+        requireView(user);
+        const storeId = await this.resolveStoreId(user, headerStoreId);
+        const cacheKeyStr = cacheKey("orders", storeId, status ?? "", from ?? "", to ?? "", customer ?? "");
+        const hit = cacheGet<unknown[]>(cacheKeyStr);
+        if (hit) return { orders: hit, storeId };
+        const where: Record<string, unknown> = { storeId };
     if (status) where.status = { in: status.split(",") };
     if (from || to) {
       where.createdAt = {};
@@ -193,16 +197,17 @@ export class AdminController {
       ];
     }
     const list = await prisma.order.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-      take: 200,
-      select: {
-        id: true, orderNumber: true, status: true, totalMinor: true, currencyCode: true,
-        customerName: true, customerPhone: true, createdAt: true, paymentStatus: true, source: true,
-        deliveryType: true,
-      },
-    });
-    return { orders: list, storeId };
+          where,
+          orderBy: { createdAt: "desc" },
+          take: 200,
+          select: {
+            id: true, orderNumber: true, status: true, totalMinor: true, currencyCode: true,
+            customerName: true, customerPhone: true, createdAt: true, paymentStatus: true, source: true,
+            deliveryType: true, paymentMethod: true, signatureData: true, signatureAt: true,
+          },
+        });
+        cacheSet(cacheKeyStr, list, 5_000);
+        return { orders: list, storeId };
   }
 
   /** GET /admin/orders/:id — full detail (items + history). */
@@ -255,16 +260,22 @@ export class AdminController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    requireAdmin(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
-    const items = await this.productsAdmin.listFiltered(storeId, {
-      search,
-      categoryId,
-      minPriceMinor: minPrice ? Math.round(parseFloat(minPrice) * 100) : undefined,
-      maxPriceMinor: maxPrice ? Math.round(parseFloat(maxPrice) * 100) : undefined,
-      active: active === undefined ? undefined : active === "true",
-    });
-    return { products: items, storeId };
+        requireAdmin(user);
+        const storeId = await this.resolveStoreId(user, headerStoreId);
+        const unfiltered = !search && !categoryId && minPrice === undefined && maxPrice === undefined && active === undefined;
+        if (unfiltered) {
+          const hit = cacheGet<unknown[]>(cacheKey("products", storeId));
+          if (hit) return { products: hit, storeId };
+        }
+        const items = await this.productsAdmin.listFiltered(storeId, {
+          search,
+          categoryId,
+          minPriceMinor: minPrice ? Math.round(parseFloat(minPrice) * 100) : undefined,
+          maxPriceMinor: maxPrice ? Math.round(parseFloat(maxPrice) * 100) : undefined,
+          active: active === undefined ? undefined : active === "true",
+        });
+        if (unfiltered) cacheSet(cacheKey("products", storeId), items, 30_000);
+        return { products: items, storeId };
   }
 
   /** GET /admin/products/categories — store categories. */
@@ -287,8 +298,9 @@ export class AdminController {
     requireAdmin(user);
     const storeId = await this.resolveStoreId(user, headerStoreId);
     const result = await this.productsAdmin.create(storeId, body);
-    if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
-    return result.value;
+        if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+        cacheBust(cacheKey("products", storeId));
+        return result.value;
   }
 
   /** PATCH /admin/products/:id — update product + stock. */
@@ -303,9 +315,10 @@ export class AdminController {
     requireAdmin(user);
     const storeId = await this.resolveStoreId(user, headerStoreId);
     const result = await this.productsAdmin.update(storeId, id, body);
-    if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
-    return result.value;
-  }
+        if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+        cacheBust(cacheKey("products", storeId));
+        return result.value;
+      }
 
   /** DELETE /admin/products/:id — soft delete. */
   @Delete("products/:id")
@@ -322,11 +335,14 @@ export class AdminController {
   @Get("settings")
   async getSettings(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
     const user = req.user;
-    requireAdmin(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
-    const settings = await this.settingsAdmin.get(storeId);
-    if (!settings) throw new HttpException({ type: "not_found", message: "Store not found" }, HttpStatus.NOT_FOUND);
-    return { ...settings, storeId };
+        requireAdmin(user);
+        const storeId = await this.resolveStoreId(user, headerStoreId);
+        const hit = cacheGet<unknown>(cacheKey("settings", storeId));
+        if (hit) return { ...(hit as object), storeId };
+        const settings = await this.settingsAdmin.get(storeId);
+        if (!settings) throw new HttpException({ type: "not_found", message: "Store not found" }, HttpStatus.NOT_FOUND);
+        cacheSet(cacheKey("settings", storeId), settings, 60_000);
+        return { ...settings, storeId };
   }
 
   /** PATCH /admin/settings — update store settings. */
@@ -344,8 +360,9 @@ export class AdminController {
     requireAdmin(user);
     const storeId = await this.resolveStoreId(user, headerStoreId);
     const result = await this.settingsAdmin.update(storeId, body);
-    if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
-    return { ...result.value, storeId };
+        if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+        cacheBust(cacheKey("settings", storeId));
+        return { ...result.value, storeId };
   }
 
   /** PATCH /admin/store-link — update store link branding (P8). */
@@ -446,6 +463,21 @@ export class AdminController {
     };
   }
 
+  /** POST /admin/customers — create a customer (find-or-create global by phone/email, then store profile). */
+  @Post("customers")
+  async createCustomer(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Body() body: { name: string; phone?: string; email?: string; creditApproved?: boolean; creditLimitMinor?: number },
+    @Headers("x-store-id") headerStoreId?: string,
+  ) {
+    const user = req.user;
+    requireAdmin(user);
+    const storeId = await this.resolveStoreId(user, headerStoreId);
+    const result = await this.loyalty.createCustomer(storeId, body);
+    if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+    return { ...result.value, storeId };
+  }
+
   /** GET /admin/customers/export.csv — customer list + balances (owner/manager). (Must precede customers/:id.) */
   @Get("customers/export.csv")
   async exportCustomersCsv(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string, @Res() res?: any) {
@@ -496,6 +528,38 @@ export class AdminController {
     if (!sc) throw new HttpException({ type: "not_found", message: "Customer not found" }, HttpStatus.NOT_FOUND);
     const ledger = await this.loyalty.customerLedger(storeId, sc.customerId);
     return ledger;
+  }
+
+  /** PATCH /admin/customers/:id — update name/phone/email + credit limit. */
+  @Patch("customers/:id")
+  async updateCustomer(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Param("id") id: string,
+    @Body() body: { name?: string; phone?: string; email?: string; creditLimitMinor?: number },
+    @Headers("x-store-id") headerStoreId?: string,
+  ) {
+    const user = req.user;
+    requireAdmin(user);
+    const storeId = await this.resolveStoreId(user, headerStoreId);
+    const result = await this.loyalty.updateCustomer(storeId, id, body);
+    if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+    return { ...result.value, storeId };
+  }
+
+  /** POST /admin/customers/:id/loyalty/adjust — manual points adjustment (never below 0). */
+  @Post("customers/:id/loyalty/adjust")
+  async adjustPoints(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Param("id") id: string,
+    @Body() body: { delta: number; note: string },
+    @Headers("x-store-id") headerStoreId?: string,
+  ) {
+    const user = req.user;
+    requireAdmin(user);
+    const storeId = await this.resolveStoreId(user, headerStoreId);
+    const result = await this.loyalty.adjustPoints(storeId, id, body.delta, body.note);
+    if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+    return result.value;
   }
 
   /** PATCH /admin/orders/:id/items — W1: stock-delta item edit (RECEIVED/CONFIRMED/ON_HOLD). */

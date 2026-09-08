@@ -1,10 +1,12 @@
 "use client";
 
 // POS (V1) — staged, mobile-first: Products → Review (customer + autosave) → Payment
-// (Cash w/ tendered + change, or Utang w/ start/due dates) → Done (+print receipt).
+// (Cash w/ tendered + change, or Utang w/ start/due dates + signature) → Done (+print receipt).
 // Hold: creates an ON_HOLD order (stock earmarked) listed in the held strip; Resume loads it back.
+// Review also offers 'Save as pre-order' → POSTs the cart as an ON_HOLD draft, then jumps to
+// the Pre Order panel (preorders). Loyalty points redeemable on utang.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { API_URL } from "../../config";
 import { adminHeaders } from "../../lib/admin";
 import { toast } from "../../lib/toast";
@@ -14,7 +16,7 @@ interface PosProduct {
   id: string; name: string; sku: string; priceMinor: number;
   availableQuantity: number; category: { name: string } | null;
 }
-interface PosCustomer { id: string; name: string | null; email: string | null; phone: string | null; }
+interface PosCustomer { id: string; name: string | null; email: string | null; phone: string | null; loyaltyPoints?: number; }
 interface CartLine { product: PosProduct; quantity: number; }
 interface HeldOrder { id: string; orderNumber: string; totalMinor: number; customerName: string; storeCustomerId: string | null; createdAt: string; items: { productId: string; productName: string; quantity: number; unitPriceMinor: number }[]; }
 interface LastSale { orderId: string; orderNumber: string; totalMinor: number; changeMinor: number; paymentMethod: string }
@@ -22,10 +24,110 @@ interface LastSale { orderId: string; orderNumber: string; totalMinor: number; c
 const toPesos = (m: number) => `₱${(m / 100).toFixed(2)}`;
 const QUICK_CASH = [5000, 10000, 20000, 50000, 100000];
 
-export default function PosPanel() {
+/** Finger-drawn signature pad: 300×120 white canvas, black 3px round-cap strokes.
+    Pointer events with touch fallback; exports via canvas.toDataURL("image/png"). */
+function SignaturePad({ onSignature }: { onSignature: (dataUrl: string | null) => void }) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const drawingRef = useRef(false);
+  const hasInkRef = useRef(false);
+  const preppedRef = useRef(false);
+  const supportsPointer = typeof window !== "undefined" && "PointerEvent" in window;
+
+  const coords = (x: number, y: number) => {
+    const c = canvasRef.current;
+    if (!c) return { x: 0, y: 0 };
+    const r = c.getBoundingClientRect();
+    return { x: (x - r.left) * (c.width / r.width), y: (y - r.top) * (c.height / r.height) };
+  };
+
+  const setup = () => {
+    const c = canvasRef.current;
+    if (!c) return null;
+    const ctx = c.getContext("2d");
+    if (!ctx) return null;
+    if (!preppedRef.current) {
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, c.width, c.height);
+      ctx.strokeStyle = "#000000";
+      ctx.lineWidth = 3;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      preppedRef.current = true;
+    }
+    return ctx;
+  };
+
+  const beginStroke = (x: number, y: number) => {
+    const ctx = setup();
+    if (!ctx) return;
+    const p = coords(x, y);
+    ctx.fillStyle = "#000000";
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(p.x, p.y);
+    drawingRef.current = true;
+    hasInkRef.current = true;
+  };
+
+  const moveStroke = (x: number, y: number) => {
+    if (!drawingRef.current) return;
+    const ctx = setup();
+    if (!ctx) return;
+    const p = coords(x, y);
+    ctx.lineTo(p.x, p.y);
+    ctx.stroke();
+  };
+
+  const endStroke = () => {
+    if (!drawingRef.current) return;
+    drawingRef.current = false;
+    const c = canvasRef.current;
+    if (c && hasInkRef.current) onSignature(c.toDataURL("image/png"));
+  };
+
+  const clearPad = () => {
+    drawingRef.current = false;
+    const c = canvasRef.current;
+    const ctx = c && c.getContext("2d");
+    if (c && ctx) {
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, c.width, c.height);
+    }
+    preppedRef.current = false;
+    hasInkRef.current = false;
+    onSignature(null);
+  };
+
+  return (
+    <div>
+      <canvas
+        ref={canvasRef}
+        width={300}
+        height={120}
+        className="border rounded d-block w-100"
+        style={{ touchAction: "none", userSelect: "none", backgroundColor: "#fff" }}
+        onPointerDown={(e) => { if (supportsPointer) { e.preventDefault(); beginStroke(e.clientX, e.clientY); } }}
+        onPointerMove={(e) => { if (supportsPointer) moveStroke(e.clientX, e.clientY); }}
+        onPointerUp={() => { if (supportsPointer) endStroke(); }}
+        onPointerCancel={() => { if (supportsPointer) endStroke(); }}
+        onTouchStart={(e) => { if (supportsPointer) return; const t = e.touches[0]; if (t) beginStroke(t.clientX, t.clientY); }}
+        onTouchMove={(e) => { if (supportsPointer) return; if (e.cancelable) e.preventDefault(); const t = e.touches[0]; if (t) moveStroke(t.clientX, t.clientY); }}
+        onTouchEnd={() => { if (supportsPointer) return; endStroke(); }}
+      />
+      <button type="button" className="btn btn-sm btn-outline-secondary mt-1" onClick={clearPad}>
+        <i className="bi bi-eraser me-1"></i>Clear
+      </button>
+    </div>
+  );
+}
+
+export default function PosPanel({ onNavigate }: { onNavigate?: (tab: string) => void } = {}) {
   const [products, setProducts] = useState<PosProduct[]>([]);
   const [customers, setCustomers] = useState<PosCustomer[]>([]);
   const [holds, setHolds] = useState<HeldOrder[]>([]);
+  const [voidTarget, setVoidTarget] = useState<HeldOrder | null>(null);
   const [step, setStep] = useState<"products" | "review" | "payment" | "done">("products");
   const [cart, setCart] = useState<CartLine[]>([]);
   const [customerId, setCustomerId] = useState("");
@@ -43,6 +145,10 @@ export default function PosPanel() {
   const [busy, setBusy] = useState(false);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("");
+
+  const [usePoints, setUsePoints] = useState(false);
+  const [creditSig, setCreditSig] = useState<string | null>(null);
+  const [creditSigError, setCreditSigError] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -66,7 +172,9 @@ export default function PosPanel() {
   const subtotal = cart.reduce((s, l) => s + l.product.priceMinor * l.quantity, 0);
   const tenderedMinor = Math.round(parseFloat(tendered || "0") * 100);
   const changeMinor = payment === "cash" ? tenderedMinor - subtotal : 0;
-  const canPay = cart.length > 0 && (payment === "cash" ? tenderedMinor >= subtotal : !!customerId);
+  const loyaltyCustomer = customers.find((c) => c.id === customerId);
+  const loyaltyPoints = loyaltyCustomer?.loyaltyPoints ?? 0;
+  const canPay = cart.length > 0 && (payment === "cash" ? tenderedMinor >= subtotal : (!!customerId && !!creditSig));
 
   const addProduct = (product: PosProduct) => {
     setError(null);
@@ -140,8 +248,27 @@ export default function PosPanel() {
     setStep("review");
   };
 
+  /** Delete (void) a held order from the POS strip — restores stock. */
+  const doVoidHold = async () => {
+    if (!voidTarget) return;
+    setBusy(true); setError(null);
+    try {
+      const res = await fetch(`${API_URL}/admin/pos/holds/${voidTarget.id}/void`, {
+        method: "POST", headers: { "Content-Type": "application/json", ...adminHeaders() },
+        body: JSON.stringify({ reason: "deleted from POS" }),
+      });
+      const d = await res.json();
+      if (!res.ok) { setError(d?.message ?? "Delete failed"); return; }
+      toast(`Held order ${voidTarget.orderNumber} deleted — stock restored`);
+      setVoidTarget(null);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Delete failed");
+    } finally { setBusy(false); }
+  };
+
   const complete = async () => {
-    if (!canPay) { setError(payment === "cash" ? "Tendered amount must cover the total" : "Select a customer for utang"); return; }
+    if (!canPay) { setError(payment === "cash" ? "Tendered amount must cover the total" : "Select a customer and sign for utang"); return; }
     setBusy(true); setError(null);
     try {
       const customer = await ensureCustomer();
@@ -153,6 +280,8 @@ export default function PosPanel() {
         customerId: customer ?? undefined,
         startAt: payment === "credit" ? (startAt || new Date().toISOString()) : undefined,
         dueAt: payment === "credit" ? (dueAt || undefined) : undefined,
+        loyaltyPoints: payment === "credit" && usePoints ? loyaltyPoints : undefined,
+        signatureData: payment === "credit" && creditSig ? creditSig : undefined,
       };
       const url = workingHoldId
         ? `${API_URL}/admin/pos/holds/${workingHoldId}/complete`
@@ -173,6 +302,34 @@ export default function PosPanel() {
   const resetSale = () => {
     setCart([]); setCustomerId(""); setNewName(""); setNewPhone("");
     setTendered(""); setStartAt(""); setDueAt(""); setWorkingHoldId(null);
+    setUsePoints(false); setCreditSig(null); setCreditSigError(false);
+  };
+
+  // ── Save as pre-order (review step quick action) ──
+  const savePreorder = async () => {
+    if (cart.length === 0) { setError("Cart is empty"); return; }
+    setBusy(true); setError(null);
+    try {
+      const customer = await ensureCustomer();
+      if (!customer) { setError("Select or add a customer for pre-orders"); setBusy(false); return; }
+      const res = await fetch(`${API_URL}/admin/pos/preorder`, {
+        method: "POST", headers: { "Content-Type": "application/json", ...adminHeaders() },
+        body: JSON.stringify({
+          items: cart.map((l) => ({ productId: l.product.id, quantity: l.quantity })),
+          customerId: customer ?? undefined,
+          startAt: undefined,
+          dueAt: undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data?.errors?.join(", ") ?? data?.message ?? "Pre-order failed"); return; }
+      toast(`Pre-order saved — ${data.orderNumber}`);
+      resetSale();
+      await load();
+      onNavigate?.("preorders");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Pre-order failed");
+    } finally { setBusy(false); }
   };
 
   const categories = [...new Set(products.map((p) => p.category?.name).filter(Boolean))] as string[];
@@ -191,216 +348,272 @@ export default function PosPanel() {
       {error && <div className="alert alert-danger py-2 small">{error}</div>}
       {receiptOrder && <ReceiptModal orderId={receiptOrder} onClose={() => setReceiptOrder(null)} />}
 
-      {/* step indicator */}
-      <div className="d-flex gap-2 small mb-3">
-        {(["products", "review", "payment", "done"] as const).map((s, i) => (
-          <span key={s} className={`badge ${step === s ? "text-bg-primary" : "text-bg-secondary"}`}>{i + 1}. {s}</span>
-        ))}
-      </div>
-
-      {/* ── DONE ── */}
-      {step === "done" && lastSale && (
-        <div className="card text-center border-success shadow-sm">
-          <div className="card-body p-4">
-            <i className="bi bi-check-circle-fill text-success fs-1 d-block mb-2"></i>
-            <h2 className="h4 mb-1">Order completed</h2>
-            <div className="h3 fw-bold text-primary">{lastSale.orderNumber}</div>
-            <p className="mb-1">Total <strong>{toPesos(lastSale.totalMinor)}</strong></p>
-            {lastSale.paymentMethod === "cash" && (
-              <p className={`h5 mb-2 ${lastSale.changeMinor >= 0 ? "text-success" : ""}`}>Change: <strong>{toPesos(lastSale.changeMinor)}</strong></p>
-            )}
-            {lastSale.paymentMethod === "credit" && <p className="mb-2 text-warning">Charged to credit (utang)</p>}
-            <div className="d-grid gap-2">
-              <button className="btn btn-primary btn-lg" onClick={() => { setLastSale(null); setStep("products"); }}>
-                <i className="bi bi-plus-lg me-1"></i>New sale
-              </button>
-              <button className="btn btn-outline-secondary" onClick={() => setReceiptOrder(lastSale.orderId)}>
-                <i className="bi bi-printer me-1"></i>Print receipt
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── PRODUCTS ── */}
-      {step === "products" && (
-        <>
-          <div className="d-flex gap-2 mb-2 flex-wrap">
-            <input className="form-control form-control-sm" style={{ maxWidth: 200 }} placeholder="Search…" value={search} onChange={(e) => setSearch(e.target.value)} />
-            <button className={`btn btn-sm ${category === "" ? "btn-primary" : "btn-outline-primary"}`} onClick={() => setCategory("")}>All</button>
-            {categories.map((c) => (
-              <button key={c} className={`btn btn-sm ${category === c ? "btn-primary" : "btn-outline-primary"}`} onClick={() => setCategory(category === c ? "" : c)}>{c}</button>
+      {/* ── SELL ── */}
+          {/* step indicator */}
+          <div className="d-flex gap-2 small mb-3">
+            {(["products", "review", "payment", "done"] as const).map((s, i) => (
+              <span key={s} className={`badge ${step === s ? "text-bg-primary" : "text-bg-secondary"}`}>{i + 1}. {s}</span>
             ))}
           </div>
 
-          {holds.length > 0 && (
-            <div className="alert alert-light border small mb-2 d-flex flex-wrap gap-2 align-items-center">
-              <span className="fw-semibold"><i className="bi bi-pause-circle me-1"></i>On hold ({holds.length})</span>
-              {holds.map((h) => (
-                <button key={h.id} className="btn btn-sm btn-outline-warning" onClick={() => resume(h)}>
-                  {h.orderNumber} · {toPesos(h.totalMinor)} · resume
-                </button>
-              ))}
+          {/* ── DONE ── */}
+          {step === "done" && lastSale && (
+            <div className="card text-center border-success shadow-sm">
+              <div className="card-body p-4">
+                <i className="bi bi-check-circle-fill text-success fs-1 d-block mb-2"></i>
+                <h2 className="h4 mb-1">Order completed</h2>
+                <div className="h3 fw-bold text-primary">{lastSale.orderNumber}</div>
+                <p className="mb-1">Total <strong>{toPesos(lastSale.totalMinor)}</strong></p>
+                {lastSale.paymentMethod === "cash" && (
+                  <p className={`h5 mb-2 ${lastSale.changeMinor >= 0 ? "text-success" : ""}`}>Change: <strong>{toPesos(lastSale.changeMinor)}</strong></p>
+                )}
+                {lastSale.paymentMethod === "credit" && <p className="mb-2 text-warning">Charged to credit (utang)</p>}
+                <div className="d-grid gap-2">
+                  <button className="btn btn-primary btn-lg" onClick={() => { setLastSale(null); setStep("products"); }}>
+                    <i className="bi bi-plus-lg me-1"></i>New sale
+                  </button>
+                  <button className="btn btn-outline-secondary" onClick={() => setReceiptOrder(lastSale.orderId)}>
+                    <i className="bi bi-printer me-1"></i>Print receipt
+                  </button>
+                </div>
+              </div>
             </div>
           )}
 
-          <div className="row g-2">
-            {filtered.map((p) => (
-              <div className="col-6 col-md-4 col-lg-3" key={p.id}>
-                <button
-                  type="button"
-                  className="btn btn-outline-primary w-100 py-3 d-flex flex-column"
-                  disabled={p.availableQuantity <= 0}
-                  onClick={() => addProduct(p)}
-                >
-                  <span className="fw-semibold small text-truncate w-100 text-center">{p.name}</span>
-                  <span className="small">{toPesos(p.priceMinor)}</span>
-                  <span className={`small ${p.availableQuantity <= 0 ? "text-danger" : "text-muted"}`}>
-                    {p.availableQuantity <= 0 ? "Out" : `${p.availableQuantity} left`}
-                  </span>
-                </button>
+          {/* ── PRODUCTS ── */}
+          {step === "products" && (
+            <>
+              <div className="d-flex gap-2 mb-2 flex-wrap">
+                <input className="form-control form-control-sm" style={{ maxWidth: 200 }} placeholder="Search…" value={search} onChange={(e) => setSearch(e.target.value)} />
+                <button className={`btn btn-sm ${category === "" ? "btn-primary" : "btn-outline-primary"}`} onClick={() => setCategory("")}>All</button>
+                {categories.map((c) => (
+                  <button key={c} className={`btn btn-sm ${category === c ? "btn-primary" : "btn-outline-primary"}`} onClick={() => setCategory(category === c ? "" : c)}>{c}</button>
+                ))}
               </div>
-            ))}
-          </div>
 
-          {/* sticky bottom bar */}
-          <div className="position-fixed bottom-0 start-0 end-0 bg-white border-top shadow-sm d-flex align-items-center justify-content-between px-3 py-2">
-            <div>
-              <div className="fw-bold">{cart.reduce((s, l) => s + l.quantity, 0)} item(s)</div>
-              <div className="text-muted small">{toPesos(subtotal)}</div>
-            </div>
-            <button className="btn btn-primary btn-lg" disabled={cart.length === 0} onClick={() => setStep("review")}>
-              Review order <i className="bi bi-arrow-right ms-1"></i>
-            </button>
-          </div>
-        </>
-      )}
+              {holds.length > 0 && (
+                <div className="alert alert-light border small mb-2 d-flex flex-wrap gap-2 align-items-center">
+                  <span className="fw-semibold"><i className="bi bi-pause-circle me-1"></i>On hold ({holds.length})</span>
+                  {holds.map((h) => (
+                    <span key={h.id} className="d-inline-flex align-items-center gap-1">
+                      <button className="btn btn-sm btn-outline-warning" onClick={() => resume(h)}>
+                        {h.orderNumber} · {toPesos(h.totalMinor)} · resume
+                      </button>
+                      <button
+                        className="btn btn-sm btn-outline-danger py-0"
+                        title="Delete hold order"
+                        onClick={() => setVoidTarget(h)}
+                      >
+                        <i className="bi bi-x"></i>
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
 
-      {/* ── REVIEW ── */}
-      {step === "review" && (
-        <div className="card mb-2">
-          <div className="card-body">
-            {cart.length === 0 ? (
-              <p className="text-muted small text-center py-4">No items — go back and add products.</p>
-            ) : (
-              <>
-                {cart.map((l) => (
-                  <div key={l.product.id} className="d-flex align-items-center gap-2 mb-1">
-                    <div className="flex-grow-1 small">
-                      <div className="fw-semibold">{l.product.name}</div>
-                      <div className="text-muted">{toPesos(l.product.priceMinor)}</div>
-                    </div>
-                    <div className="input-group input-group-sm" style={{ width: 104 }}>
-                      <button className="btn btn-outline-secondary" onClick={() => setQty(l.product.id, l.quantity - 1)}>-</button>
-                      <input className="form-control text-center" value={l.quantity} readOnly />
-                      <button className="btn btn-outline-secondary" onClick={() => setQty(l.product.id, l.quantity + 1)}>+</button>
-                    </div>
-                    <div className="fw-semibold small" style={{ width: 66, textAlign: "right" }}>{toPesos(l.product.priceMinor * l.quantity)}</div>
+              <div className="row g-2">
+                {filtered.map((p) => (
+                  <div className="col-6 col-md-4 col-lg-3" key={p.id}>
+                    <button
+                      type="button"
+                      className="btn btn-outline-primary w-100 py-3 d-flex flex-column"
+                      disabled={p.availableQuantity <= 0}
+                      onClick={() => addProduct(p)}
+                    >
+                      <span className="fw-semibold small text-truncate w-100 text-center">{p.name}</span>
+                      <span className="small">{toPesos(p.priceMinor)}</span>
+                      <span className={`small ${p.availableQuantity <= 0 ? "text-danger" : "text-muted"}`}>
+                        {p.availableQuantity <= 0 ? "Out" : `${p.availableQuantity} left`}
+                      </span>
+                    </button>
                   </div>
                 ))}
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* customer + payment (review/payment share the card) */}
-      {step === "review" && (
-        <div className="card mb-2">
-          <div className="card-body">
-            <h6 className="small fw-bold mb-2">Customer</h6>
-            <select className="form-select form-select-sm mb-1" value={customerId} onChange={(e) => { setCustomerId(e.target.value); if (e.target.value) { setNewName(""); setNewPhone(""); } }}>
-              <option value="">Walk-in (no customer)…</option>
-              {customers.map((c) => <option key={c.id} value={c.id}>{c.name ?? c.email ?? c.phone ?? "Customer"}</option>)}
-            </select>
-            {!customerId && (
-              <div className="row g-1 mb-1">
-                <div className="col-7"><input className="form-control form-control-sm" placeholder="New customer name (autosaves)" value={newName} onChange={(e) => setNewName(e.target.value)} /></div>
-                <div className="col-5"><input className="form-control form-control-sm" placeholder="Phone" value={newPhone} onChange={(e) => setNewPhone(e.target.value)} /></div>
               </div>
-            )}
-            {newName.trim() && !customerId && <small className="text-muted">Customer is saved automatically when you complete.</small>}
 
-            <div className="d-flex justify-content-between fw-bold fs-5 mt-2 mb-2">
-              <span>Total</span><span>{toPesos(subtotal)}</span>
-            </div>
-            <div className="d-flex gap-2">
-              <button className="btn btn-outline-secondary flex-fill" onClick={() => setStep("products")}>Back</button>
-              <button className="btn btn-warning flex-fill" disabled={cart.length === 0 || busy} onClick={hold}>
-                <i className="bi bi-pause-circle me-1"></i>Hold order
-              </button>
-              <button className="btn btn-primary flex-fill" disabled={cart.length === 0} onClick={() => { setError(null); setStep("payment"); }}>
-                Pay <i className="bi bi-arrow-right ms-1"></i>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ── PAYMENT ── */}
-      {step === "payment" && (
-        <div className="card">
-          <div className="card-body">
-            <h6 className="small fw-bold mb-2">Mode of payment</h6>
-            <div className="d-flex gap-2 mb-3">
-              <button type="button" className={`btn ${payment === "cash" ? "btn-success" : "btn-outline-success"} flex-fill`} onClick={() => setPayment("cash")}>
-                <i className="bi bi-cash me-1"></i>Cash
-              </button>
-              <button type="button" className={`btn ${payment === "credit" ? "btn-warning" : "btn-outline-warning"} flex-fill`} onClick={() => setPayment("credit")}>
-                <i className="bi bi-journal me-1"></i>Utang (credit)
-              </button>
-            </div>
-
-            {payment === "cash" ? (
-              <>
-                <label className="form-label small">Amount payable: <strong>{toPesos(subtotal)}</strong></label>
-                <input className="form-control form-control-lg text-end mb-2" type="number" inputMode="decimal" min="0" step="0.01" placeholder="Enter amount paid by customer" value={tendered} onChange={(e) => setTendered(e.target.value)} />
-                <div className="d-flex flex-wrap gap-1 mb-2">
-                  {QUICK_CASH.map((q) => <button key={q} type="button" className="btn btn-sm btn-outline-secondary" onClick={() => quickCash(q)}>{toPesos(q)}</button>)}
-                  <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => quickCash(subtotal)}>Exact</button>
+              {/* sticky bottom bar */}
+              <div className="position-fixed bottom-0 start-0 end-0 bg-white border-top shadow-sm d-flex align-items-center justify-content-between px-3 py-2">
+                <div>
+                  <div className="fw-bold">{cart.reduce((s, l) => s + l.quantity, 0)} item(s)</div>
+                  <div className="text-muted small">{toPesos(subtotal)}</div>
                 </div>
-                <div className="d-flex justify-content-between fs-5 mb-3">
-                  <span className="text-muted">Change</span>
-                  <span className={changeMinor >= 0 ? "text-success fw-bold" : "text-danger"}>
-                    {changeMinor < 0 ? `Short ${toPesos(-changeMinor)}` : toPesos(changeMinor)}
-                  </span>
-                </div>
-              </>
-            ) : (
-              <>
-                <p className="small text-muted mb-2">Charged to the customer&apos;s credit (utang). Approved customers only.</p>
-                {!customerId && (
+                <button className="btn btn-primary btn-lg" disabled={cart.length === 0} onClick={() => setStep("review")}>
+                  Review order <i className="bi bi-arrow-right ms-1"></i>
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* ── REVIEW ── */}
+          {step === "review" && (
+            <div className="card mb-2">
+              <div className="card-body">
+                {cart.length === 0 ? (
+                  <p className="text-muted small text-center py-4">No items — go back and add products.</p>
+                ) : (
                   <>
-                    <input className="form-control form-control-sm mb-1" placeholder="Customer name (saves automatically)" value={newName} onChange={(e) => setNewName(e.target.value)} />
-                    <input className="form-control form-control-sm mb-2" placeholder="Phone" value={newPhone} onChange={(e) => setNewPhone(e.target.value)} />
+                    {cart.map((l) => (
+                      <div key={l.product.id} className="d-flex align-items-center gap-2 mb-1">
+                        <div className="flex-grow-1 small">
+                          <div className="fw-semibold">{l.product.name}</div>
+                          <div className="text-muted">{toPesos(l.product.priceMinor)}</div>
+                        </div>
+                        <div className="input-group input-group-sm" style={{ width: 104 }}>
+                          <button className="btn btn-outline-secondary" onClick={() => setQty(l.product.id, l.quantity - 1)}>-</button>
+                          <input className="form-control text-center" value={l.quantity} readOnly />
+                          <button className="btn btn-outline-secondary" onClick={() => setQty(l.product.id, l.quantity + 1)}>+</button>
+                        </div>
+                        <div className="fw-semibold small" style={{ width: 66, textAlign: "right" }}>{toPesos(l.product.priceMinor * l.quantity)}</div>
+                      </div>
+                    ))}
                   </>
                 )}
-                <div className="row g-2 mb-3">
-                  <div className="col-6">
-                    <label className="form-label small">Start date</label>
-                    <input className="form-control form-control-sm" type="date" value={startAt ? fmtDate(startAt) : ""} onChange={(e) => setStartAt(e.target.value ? new Date(e.target.value).toISOString() : "")} />
+              </div>
+            </div>
+          )}
+
+          {/* customer + payment (review/payment share the card) */}
+          {step === "review" && (
+            <div className="card mb-2">
+              <div className="card-body">
+                <h6 className="small fw-bold mb-2">Customer</h6>
+                <select className="form-select form-select-sm mb-1" value={customerId} onChange={(e) => { setCustomerId(e.target.value); if (e.target.value) { setNewName(""); setNewPhone(""); } setUsePoints(false); }}>
+                  <option value="">Walk-in (no customer)…</option>
+                  {customers.map((c) => <option key={c.id} value={c.id}>{c.name ?? c.email ?? c.phone ?? "Customer"}</option>)}
+                </select>
+                {!customerId && (
+                  <div className="row g-1 mb-1">
+                    <div className="col-7"><input className="form-control form-control-sm" placeholder="New customer name (autosaves)" value={newName} onChange={(e) => setNewName(e.target.value)} /></div>
+                    <div className="col-5"><input className="form-control form-control-sm" placeholder="Phone" value={newPhone} onChange={(e) => setNewPhone(e.target.value)} /></div>
                   </div>
-                  <div className="col-6">
-                    <label className="form-label small">Due date (default +{termDays}d)</label>
-                    <input className="form-control form-control-sm" type="date" value={dueAt ? fmtDate(dueAt) : ""} onChange={(e) => setDueAt(e.target.value ? new Date(e.target.value).toISOString() : "")} />
-                  </div>
-                  {!dueAt && startAt && (
-                    <small className="text-muted">Due date will default to start + {termDays} days.</small>
-                  )}
+                )}
+                {newName.trim() && !customerId && <small className="text-muted">Customer is saved automatically when you complete.</small>}
+
+                <div className="d-flex justify-content-between fw-bold fs-5 mt-2 mb-2">
+                  <span>Total</span><span>{toPesos(subtotal)}</span>
                 </div>
-              </>
-            )}
+                <div className="d-flex flex-wrap gap-2">
+                  <button className="btn btn-outline-secondary flex-fill" onClick={() => setStep("products")}>Back</button>
+                  <button className="btn btn-warning flex-fill" disabled={cart.length === 0 || busy} onClick={hold}>
+                    <i className="bi bi-pause-circle me-1"></i>Hold order
+                  </button>
+                  <button className="btn btn-outline-primary flex-fill" disabled={cart.length === 0 || busy} onClick={savePreorder}>
+                    <i className="bi bi-bag-check me-1"></i>Save as pre-order
+                  </button>
+                  <button className="btn btn-primary flex-fill" disabled={cart.length === 0} onClick={() => { setError(null); setStep("payment"); }}>
+                    Pay <i className="bi bi-arrow-right ms-1"></i>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
-            {workingHoldId && <div className="alert alert-light small py-2 mb-2"><i className="bi bi-pause-circle me-1"></i>Completing held order (resumed sale).</div>}
+          {/* ── PAYMENT ── */}
+          {step === "payment" && (
+            <div className="card">
+              <div className="card-body">
+                <h6 className="small fw-bold mb-2">Mode of payment</h6>
+                <div className="d-flex gap-2 mb-3">
+                  <button type="button" className={`btn ${payment === "cash" ? "btn-success" : "btn-outline-success"} flex-fill`} onClick={() => setPayment("cash")}>
+                    <i className="bi bi-cash me-1"></i>Cash
+                  </button>
+                  <button type="button" className={`btn ${payment === "credit" ? "btn-warning" : "btn-outline-warning"} flex-fill`} onClick={() => setPayment("credit")}>
+                    <i className="bi bi-journal me-1"></i>Utang (credit)
+                  </button>
+                </div>
 
-            <div className="d-flex gap-2">
-              <button className="btn btn-outline-secondary flex-fill" onClick={() => setStep("review")}>Back</button>
-              <button className="btn btn-success btn-lg flex-fill" disabled={!canPay || busy} onClick={complete}>
-                {busy ? "Completing…" : `Complete · ${toPesos(subtotal)}`}
-              </button>
+                {payment === "cash" ? (
+                  <>
+                    <label className="form-label small">Amount payable: <strong>{toPesos(subtotal)}</strong></label>
+                    <input className="form-control form-control-lg text-end mb-2" type="number" inputMode="decimal" min="0" step="0.01" placeholder="Enter amount paid by customer" value={tendered} onChange={(e) => setTendered(e.target.value)} />
+                    <div className="d-flex flex-wrap gap-1 mb-2">
+                      {QUICK_CASH.map((q) => <button key={q} type="button" className="btn btn-sm btn-outline-secondary" onClick={() => quickCash(q)}>{toPesos(q)}</button>)}
+                      <button type="button" className="btn btn-sm btn-outline-primary" onClick={() => quickCash(subtotal)}>Exact</button>
+                    </div>
+                    <div className="d-flex justify-content-between fs-5 mb-3">
+                      <span className="text-muted">Change</span>
+                      <span className={changeMinor >= 0 ? "text-success fw-bold" : "text-danger"}>
+                        {changeMinor < 0 ? `Short ${toPesos(-changeMinor)}` : toPesos(changeMinor)}
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="small text-muted mb-2">Charged to the customer&apos;s credit (utang). Approved customers only.</p>
+                    {!customerId && (
+                      <>
+                        <input className="form-control form-control-sm mb-1" placeholder="Customer name (saves automatically)" value={newName} onChange={(e) => setNewName(e.target.value)} />
+                        <input className="form-control form-control-sm mb-2" placeholder="Phone" value={newPhone} onChange={(e) => setNewPhone(e.target.value)} />
+                      </>
+                    )}
+                    {customerId && (
+                      <div className="d-flex align-items-center justify-content-between mb-1">
+                        <span className="small">
+                          Balance: <strong>{loyaltyPoints} pts</strong> · redeem ≈ <strong>₱{Math.floor(loyaltyPoints / 100)}</strong>
+                        </span>
+                        <div className="form-check form-switch flex-shrink-0 mb-0">
+                          <input className="form-check-input" type="checkbox" role="switch" id="posRedeem" checked={usePoints} disabled={loyaltyPoints < 100} onChange={(e) => setUsePoints(e.target.checked)} />
+                          <label className="form-check-label small" htmlFor="posRedeem">Redeem points</label>
+                        </div>
+                      </div>
+                    )}
+                    {loyaltyPoints < 100 && <div className="small text-muted mb-1">{`Loyalty: 100 pts = ₱1. ${loyaltyPoints} pts available.`}</div>}
+                    <div className="mb-3">
+                      <div className="small text-muted mb-1">Signature required for utang</div>
+                      <SignaturePad onSignature={(d) => { setCreditSig(d); if (d) setCreditSigError(false); }} />
+                      {creditSigError && <div className="text-danger small">Customer signature required — please sign above.</div>}
+                    </div>
+                    <div className="row g-2 mb-3">
+                      <div className="col-6">
+                        <label className="form-label small">Start date</label>
+                        <input className="form-control form-control-sm" type="date" value={startAt ? fmtDate(startAt) : ""} onChange={(e) => setStartAt(e.target.value ? new Date(e.target.value).toISOString() : "")} />
+                      </div>
+                      <div className="col-6">
+                        <label className="form-label small">Due date (default +{termDays}d)</label>
+                        <input className="form-control form-control-sm" type="date" value={dueAt ? fmtDate(dueAt) : ""} onChange={(e) => setDueAt(e.target.value ? new Date(e.target.value).toISOString() : "")} />
+                      </div>
+                      {!dueAt && startAt && (
+                        <small className="text-muted">Due date will default to start + {termDays} days.</small>
+                      )}
+                    </div>
+                  </>
+                )}
+
+                {workingHoldId && <div className="alert alert-light small py-2 mb-2"><i className="bi bi-pause-circle me-1"></i>Completing held order (resumed sale).</div>}
+
+                <div className="d-flex gap-2">
+                  <button className="btn btn-outline-secondary flex-fill" onClick={() => setStep("review")}>Back</button>
+                  <button className="btn btn-success btn-lg flex-fill" disabled={!canPay || busy} onClick={complete}>
+                    {busy ? "Completing…" : `Complete · ${toPesos(subtotal)}`}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+      {/* Delete hold confirm */}
+      {voidTarget && (
+        <>
+          <div className="modal fade show d-block" tabIndex={-1}>
+            <div className="modal-dialog modal-dialog-centered">
+              <div className="modal-content">
+                <div className="modal-header">
+                  <h5 className="modal-title">Delete held order — {voidTarget.orderNumber}</h5>
+                  <button type="button" className="btn-close" onClick={() => setVoidTarget(null)}></button>
+                </div>
+                <div className="modal-body">
+                  <p className="small">This cancels the held order and restores its items to stock.</p>
+                </div>
+                <div className="modal-footer">
+                  <button className="btn btn-outline-secondary" onClick={() => setVoidTarget(null)}>Cancel</button>
+                  <button className="btn btn-danger" disabled={busy} onClick={doVoidHold}>
+                    {busy ? "Deleting…" : "Delete"}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
+          <div className="modal-backdrop fade show"></div>
+        </>
       )}
     </div>
   );
