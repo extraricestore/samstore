@@ -20,6 +20,7 @@ export interface StoreSettingsInput {
   receiptHeader?: string | null; // P11
   receiptFooter?: string | null; // P11
   showVatLabel?: boolean; // P11
+  hidePricePreOrder?: boolean; // P11: hide per-product prices in Pre Orders screen
 }
 
 export class StoreSettingsService {
@@ -57,6 +58,7 @@ export class StoreSettingsService {
         receiptHeader: store.settings?.receiptHeader ?? null,
         receiptFooter: store.settings?.receiptFooter ?? null,
         showVatLabel: store.settings?.showVatLabel ?? true,
+        hidePricePreOrder: store.settings?.hidePricePreOrder ?? false,
       },
     };
   }
@@ -93,6 +95,7 @@ export class StoreSettingsService {
         ...(input.receiptHeader !== undefined ? { receiptHeader: input.receiptHeader } : {}),
         ...(input.receiptFooter !== undefined ? { receiptFooter: input.receiptFooter } : {}),
         ...(input.showVatLabel !== undefined ? { showVatLabel: input.showVatLabel } : {}),
+        ...(input.hidePricePreOrder !== undefined ? { hidePricePreOrder: input.hidePricePreOrder } : {}),
       },
       create: {
         storeId,
@@ -110,6 +113,7 @@ export class StoreSettingsService {
         receiptHeader: input.receiptHeader ?? null,
         receiptFooter: input.receiptFooter ?? null,
         showVatLabel: input.showVatLabel ?? true,
+        hidePricePreOrder: input.hidePricePreOrder ?? false,
       },
     });
     return { ok: true, value: { id: storeId } };

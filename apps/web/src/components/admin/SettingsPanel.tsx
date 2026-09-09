@@ -27,8 +27,9 @@ interface StoreSettings {
     receiptHeader: string | null;
     receiptFooter: string | null;
     showVatLabel: boolean;
-  };
-}
+        hidePricePreOrder: boolean;
+      };
+    }
 
 export default function SettingsPanel() {
   const [data, setData] = useState<StoreSettings | null>(null);
@@ -47,6 +48,7 @@ export default function SettingsPanel() {
   const [deliveryEnabled, setDeliveryEnabled] = useState(true);
   const [pickupEnabled, setPickupEnabled] = useState(false);
   const [showVat, setShowVat] = useState(true);
+  const [hidePrePrice, setHidePrePrice] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -76,6 +78,7 @@ export default function SettingsPanel() {
       setDeliveryEnabled(d.settings.deliveryEnabled);
       setPickupEnabled(d.settings.pickupEnabled);
       setShowVat(d.settings.showVatLabel);
+      setHidePrePrice(d.settings.hidePricePreOrder ?? false);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Load failed");
     } finally {
@@ -108,7 +111,8 @@ export default function SettingsPanel() {
           receiptHeader: form.receiptHeader || null,
           receiptFooter: form.receiptFooter || null,
           showVatLabel: showVat,
-        }),
+                    hidePricePreOrder: hidePrePrice,
+                  }),
       });
       const body = await res.json();
       if (!res.ok) {
@@ -249,11 +253,15 @@ export default function SettingsPanel() {
                                   <input className="form-control" type="number" step="0.01" min="0" value={form.creditLimitPesos} onChange={(e) => setForm({ ...form, creditLimitPesos: e.target.value })} placeholder="0 = credit disabled" />
                                 </div>
                                 <div className="col-md-8">
-                                  <div className="form-check form-switch">
-                                    <input className="form-check-input" type="checkbox" id="vat" checked={showVat} onChange={(e) => setShowVat(e.target.checked)} />
-                                    <label className="form-check-label" htmlFor="vat">Show VAT display-only label on receipts ("Prices VAT-inclusive, 12%")</label>
-                                  </div>
-                                </div>
+                                                                  <div className="form-check form-switch">
+                                                                    <input className="form-check-input" type="checkbox" id="vat" checked={showVat} onChange={(e) => setShowVat(e.target.checked)} />
+                                                                    <label className="form-check-label" htmlFor="vat">Show VAT display-only label on receipts ("Prices VAT-inclusive, 12%")</label>
+                                                                  </div>
+                                                                  <div className="form-check form-switch">
+                                                                    <input className="form-check-input" type="checkbox" id="hidePrePrice" checked={hidePrePrice} onChange={(e) => setHidePrePrice(e.target.checked)} />
+                                                                    <label className="form-check-label" htmlFor="hidePrePrice">Hide price on pre order <span className="text-muted small">(per-product prices hidden in the Pre Orders screen — subtotal/total stay)</span></label>
+                                                                  </div>
+                                                                </div>
                                 <div className="col-md-6">
                                   <label className="form-label small">Receipt header text</label>
                                   <input className="form-control" value={form.receiptHeader} onChange={(e) => setForm({ ...form, receiptHeader: e.target.value })} placeholder="e.g. Salamat po! / Store address & phone" />

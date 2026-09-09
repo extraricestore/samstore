@@ -174,6 +174,10 @@ export default function PreOrdersPanel({ onNavigate }: { onNavigate?: (tab: stri
   const [buildSearch, setBuildSearch] = useState("");
   const [buildCategory, setBuildCategory] = useState("");
   const [buildBusy, setBuildBusy] = useState(false);
+  const [hidePrice, setHidePrice] = useState(false); // StoreSettings.hidePricePreOrder
+
+  /** ₱— when store hides per-product prices (subtotal/total still shown). */
+  const maybePrice = (minor: number) => (hidePrice ? "—" : toPesos(minor));
 
   const loadPreorders = useCallback(async () => {
     setPreLoading(true);
@@ -198,10 +202,12 @@ export default function PreOrdersPanel({ onNavigate }: { onNavigate?: (tab: stri
 
   const loadBuilder = useCallback(async () => {
     try {
-      const [p, c] = await Promise.all([
+      const [p, c, s] = await Promise.all([
         fetch(`${API_URL}/admin/products`, { headers: adminHeaders() }).then((r) => r.json()),
         fetch(`${API_URL}/admin/customers`, { headers: adminHeaders() }).then((r) => r.json()),
+        fetch(`${API_URL}/admin/settings`, { headers: adminHeaders() }).then((r) => r.json()),
       ]);
+      setHidePrice(Boolean(s?.settings?.hidePricePreOrder));
       setBuildProducts(p.products ?? []);
       setBuildCustomers(c.customers ?? []);
     } catch (e) {
@@ -560,7 +566,7 @@ export default function PreOrdersPanel({ onNavigate }: { onNavigate?: (tab: stri
                   onClick={() => addProduct(p)}
                 >
                   <span className="fw-semibold small text-truncate w-100 text-center">{p.name}</span>
-                  <span className="small">{toPesos(p.priceMinor)}</span>
+                  <span className="small">{maybePrice(p.priceMinor)}</span>
                   <span className={`small ${p.availableQuantity <= 0 ? "text-danger" : "text-muted"}`}>
                     {p.availableQuantity <= 0 ? "Out" : `${p.availableQuantity} left`}
                   </span>
@@ -594,14 +600,14 @@ export default function PreOrdersPanel({ onNavigate }: { onNavigate?: (tab: stri
                     <div key={l.product.id} className="d-flex align-items-center gap-2 mb-1">
                       <div className="flex-grow-1 small">
                         <div className="fw-semibold">{l.product.name}</div>
-                        <div className="text-muted">{toPesos(l.product.priceMinor)}</div>
+                        <div className="text-muted">{maybePrice(l.product.priceMinor)}</div>
                       </div>
                       <div className="input-group input-group-sm" style={{ width: 104 }}>
                         <button className="btn btn-outline-secondary" onClick={() => setQty(l.product.id, l.quantity - 1)}>-</button>
                         <input className="form-control text-center" value={l.quantity} readOnly />
                         <button className="btn btn-outline-secondary" onClick={() => setQty(l.product.id, l.quantity + 1)}>+</button>
                       </div>
-                      <div className="fw-semibold small" style={{ width: 66, textAlign: "right" }}>{toPesos(l.product.priceMinor * l.quantity)}</div>
+                      <div className="fw-semibold small" style={{ width: 66, textAlign: "right" }}>{maybePrice(l.product.priceMinor * l.quantity)}</div>
                     </div>
                   ))}
                 </>
@@ -716,7 +722,7 @@ export default function PreOrdersPanel({ onNavigate }: { onNavigate?: (tab: stri
                     <select className="form-select form-select-sm flex-grow-1" value={editAddId} onChange={(e) => setEditAddId(e.target.value)}>
                       <option value="">＋ Add another item…</option>
                       {buildProducts.filter((x) => !editPre.lines.some((l) => l.productId === x.id)).map((x) => (
-                        <option key={x.id} value={x.id}>{x.name} — {toPesos(x.priceMinor)}{x.availableQuantity <= 0 ? " (out of stock)" : ""}</option>
+                        <option key={x.id} value={x.id}>{x.name} — {maybePrice(x.priceMinor)}{x.availableQuantity <= 0 ? " (out of stock)" : ""}</option>
                       ))}
                     </select>
                     <button className="btn btn-outline-secondary btn-sm" disabled={!editAddId} onClick={addEditLine}>
