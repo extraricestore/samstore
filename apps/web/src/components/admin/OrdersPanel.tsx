@@ -9,6 +9,7 @@ import { useCallback, useEffect, useState } from "react";
 import { API_URL } from "../../config";
 import { adminHeaders, type AdminOrder, getAdminRole, roleCan } from "../../lib/admin";
 import ReceiptModal from "./ReceiptModal";
+import SignaturePad from "./SignaturePad";
 import { toast } from "../../lib/toast";
 
 const ALLOWED: Record<string, string[]> = {
@@ -108,6 +109,8 @@ export default function OrdersPanel() {
   const [startAt, setStartAt] = useState("");
   const [dueAt, setDueAt] = useState("");
   const [payCustomerId, setPayCustomerId] = useState("");
+  const [paySig, setPaySig] = useState<string | null>(null);
+  const [paySigError, setPaySigError] = useState(false);
   const [customers, setCustomers] = useState<{ id: string; name: string | null }[]>([]);
 
   const load = useCallback(async () => {
@@ -329,7 +332,8 @@ export default function OrdersPanel() {
     setError(null);
     const tenderedMinor = Math.round(parseFloat(tendered || "0") * 100);
     if (payMethod === "cash" && tenderedMinor < payHold.totalMinor) { setError("Tendered amount must cover the total"); return; }
-    if (payMethod === "credit" && !payCustomerId) { setError("Select a customer for utang"); return; }
+        if (payMethod === "credit" && !payCustomerId) { setError("Select a customer for utang"); return; }
+        if (payMethod === "credit" && !paySig) { setPaySigError(true); setError("Customer signature is required for utang — please sign"); return; }
     const res = await fetch(`${API_URL}/admin/pos/holds/${payHold.id}/complete`, {
       method: "POST",
       headers: { "Content-Type": "application/json", ...adminHeaders() },
@@ -337,6 +341,7 @@ export default function OrdersPanel() {
         paymentMethod: payMethod,
         tenderedMinor: payMethod === "cash" ? tenderedMinor : undefined,
         customerId: payMethod === "credit" ? payCustomerId : undefined,
+        signatureData: payMethod === "credit" ? paySig : undefined,
         startAt: payMethod === "credit" ? (startAt || new Date().toISOString()) : undefined,
         dueAt: payMethod === "credit" ? (dueAt || undefined) : undefined,
       }),
@@ -360,8 +365,8 @@ export default function OrdersPanel() {
                     {o.status === "ON_HOLD" && canWrite && (
             <>
               <button className="btn btn-sm btn-outline-warning" onClick={() => openEdit(o)}><i className="bi bi-pencil me-1"></i>Edit</button>
-              <button className="btn btn-sm btn-success" onClick={() => { setPayHold({ id: o.id, orderNumber: o.orderNumber, totalMinor: o.totalMinor }); setPayMethod("cash"); setTendered(""); }}><i className="bi bi-cash me-1"></i>Pay</button>
-              <button className="btn btn-sm btn-outline-success" onClick={() => { setPayHold({ id: o.id, orderNumber: o.orderNumber, totalMinor: o.totalMinor }); setPayMethod("credit"); }}><i className="bi bi-journal me-1"></i>Utang</button>
+              <button className="btn btn-sm btn-success" onClick={() => { setPayHold({ id: o.id, orderNumber: o.orderNumber, totalMinor: o.totalMinor }); setPayMethod("cash"); setPaySig(null); setPaySigError(false); setTendered(""); }}><i className="bi bi-cash me-1"></i>Pay</button>
+                            <button className="btn btn-sm btn-outline-success" onClick={() => { setPayHold({ id: o.id, orderNumber: o.orderNumber, totalMinor: o.totalMinor }); setPayMethod("credit"); setPaySig(null); setPaySigError(false); }}><i className="bi bi-journal me-1"></i>Utang</button>
               {canVoidRefund && <button className="btn btn-sm btn-outline-danger" onClick={() => setConfirmAction({ orderId: o.id, kind: "voidHold" })}><i className="bi bi-pause-btn me-1"></i>Void</button>}
             </>
           )}
@@ -391,7 +396,7 @@ export default function OrdersPanel() {
                                                         {["CONFIRMED", "PREPARING", "READY"].includes(o.status) && (
                                                           <>
                                                             <button className="btn btn-sm btn-outline-warning" onClick={() => openEdit(o)} disabled={transitioning === o.id}><i className="bi bi-pencil me-1"></i>Edit</button>
-                                                            <button className="btn btn-sm btn-success" disabled={transitioning === o.id} onClick={() => { setPayHold({ id: o.id, orderNumber: o.orderNumber, totalMinor: o.totalMinor }); setPayMethod("cash"); setTendered(""); }}><i className="bi bi-cash me-1"></i>Pay</button>
+                                                            <button className="btn btn-sm btn-success" disabled={transitioning === o.id} onClick={() => { setPayHold({ id: o.id, orderNumber: o.orderNumber, totalMinor: o.totalMinor }); setPayMethod("cash"); setPaySig(null); setPaySigError(false); setTendered(""); }}><i className="bi bi-cash me-1"></i>Pay</button>
                                                             {canVoidRefund && <button className="btn btn-sm btn-outline-danger" disabled={transitioning === o.id} onClick={() => setConfirmAction({ orderId: o.id, kind: "void" })}><i className="bi bi-x-circle me-1"></i>Void</button>}
                                                           </>
                                                         )}
@@ -782,15 +787,20 @@ export default function OrdersPanel() {
                         {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                       </select>
                       <div className="row g-2">
-                        <div className="col-6">
-                          <label className="form-label small">Start</label>
-                          <input className="form-control form-control-sm" type="date" value={startAt ? startAt.slice(0, 10) : ""} onChange={(e) => setStartAt(e.target.value ? new Date(e.target.value).toISOString() : "")} />
-                        </div>
-                        <div className="col-6">
-                          <label className="form-label small">Due</label>
-                          <input className="form-control form-control-sm" type="date" value={dueAt ? dueAt.slice(0, 10) : ""} onChange={(e) => setDueAt(e.target.value ? new Date(e.target.value).toISOString() : "")} />
-                        </div>
-                      </div>
+                                              <div className="col-6">
+                                                <label className="form-label small">Start</label>
+                                                <input className="form-control form-control-sm" type="date" value={startAt ? startAt.slice(0, 10) : ""} onChange={(e) => setStartAt(e.target.value ? new Date(e.target.value).toISOString() : "")} />
+                                              </div>
+                                              <div className="col-6">
+                                                <label className="form-label small">Due</label>
+                                                <input className="form-control form-control-sm" type="date" value={dueAt ? dueAt.slice(0, 10) : ""} onChange={(e) => setDueAt(e.target.value ? new Date(e.target.value).toISOString() : "")} />
+                                              </div>
+                                            </div>
+                                            <div className="mb-1">
+                                              <div className="small text-muted mb-1">Customer signature required for utang</div>
+                                              <SignaturePad onSignature={(d) => { setPaySig(d); if (d) setPaySigError(false); }} />
+                                              {paySigError && <div className="text-danger small">Customer signature required — please sign above.</div>}
+                                            </div>
                     </>
                   )}
                 </div>
