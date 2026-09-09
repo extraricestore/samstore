@@ -524,6 +524,7 @@ export class PosService {
     const signatureAt = new Date();
 
     let changeMinor = 0;
+    let finalStatus: "COMPLETED" | "OUT_FOR_DELIVERY" = "COMPLETED";
     await prisma.$transaction(async (tx) => {
       if (input.paymentMethod === "cash") {
         const tendered = input.tenderedMinor ?? finalTotal;
@@ -537,10 +538,16 @@ export class PosService {
         if (!cr.ok) throw new Error("message" in cr.error ? cr.error.message : "Credit declined");
       }
       const cur = await tx.order.findUnique({ where: { id: holdId }, select: { snapshot: true } });
+      // Send-for-delivery: staff collected payment at the counter for a delivery-tagged order
+      // → route it into the delivery pipeline (OUT_FOR_DELIVERY) instead of completing it.
+      // The reliable delivery signal is a real address — deliveryType defaults to "delivery"
+      // in the schema, so POS holds (no address) are counter sales, never auto-routed.
+      const isDelivery = Boolean(hold.deliveryAddressLine1?.trim());
+      finalStatus = input.sendForDelivery === true && isDelivery ? "OUT_FOR_DELIVERY" : "COMPLETED";
       await tx.order.update({
         where: { id: holdId },
         data: {
-          status: "COMPLETED",
+          status: finalStatus,
           paymentMethod: input.paymentMethod,
           paymentStatus: input.paymentMethod === "cash" ? "COLLECTED" : "PENDING",
           customerName: displayName,
@@ -556,7 +563,7 @@ export class PosService {
           },
         },
       });
-      await tx.orderStatusHistory.create({ data: { orderId: holdId, storeId, fromStatus: "ON_HOLD", toStatus: "COMPLETED", actorType: "pos", actorId: actorId } });
+      await tx.orderStatusHistory.create({ data: { orderId: holdId, storeId, fromStatus: hold.status, toStatus: finalStatus, reason: input.sendForDelivery === true && isDelivery ? "paid at counter → send for delivery" : null, actorType: "pos", actorId: actorId } });
     }, { timeout: 30_000 });
 
     // v4: record loyalty redemption after the order exists (checkout pattern).
@@ -569,7 +576,7 @@ export class PosService {
         return {
           ok: true,
           value: {
-            orderId: holdId, orderNumber: hold.orderNumber, status: "COMPLETED", totalMinor: finalTotal,
+            orderId: holdId, orderNumber: hold.orderNumber, status: finalStatus, totalMinor: finalTotal,
             currencyCode: hold.currencyCode, paymentMethod: input.paymentMethod, changeMinor,
             ...(loyaltyRedeemed > 0 ? { loyaltyPointsRedeemed: loyaltyRedeemed } : {}),
           },

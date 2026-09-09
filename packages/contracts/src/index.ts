@@ -185,6 +185,8 @@ export interface PosHoldCompleteRequest {
   loyaltyPoints?: number;
   /** v4: REQUIRED for credit sales — finger-drawn signature (data-URL PNG) */
   signatureData?: string;
+  /** When the order is delivery-type and staff collected payment at the counter: send it out for delivery (status → OUT_FOR_DELIVERY) instead of completing it. */
+  sendForDelivery?: boolean;
 }
 
 export interface PosSellResponse {

@@ -103,14 +103,16 @@ export default function OrdersPanel() {
   // On-process editing
   const [editHold, setEditHold] = useState<{ id: string; orderNumber: string; status: string; lines: EditLine[] } | null>(null);
   const [products, setProducts] = useState<ProductOption[]>([]);
-  const [payHold, setPayHold] = useState<{ id: string; orderNumber: string; totalMinor: number } | null>(null);
+  const [payHold, setPayHold] = useState<{ id: string; orderNumber: string; totalMinor: number; isDelivery: boolean } | null>(null);
   const [payMethod, setPayMethod] = useState<"cash" | "credit">("cash");
   const [tendered, setTendered] = useState("");
   const [startAt, setStartAt] = useState("");
   const [dueAt, setDueAt] = useState("");
   const [payCustomerId, setPayCustomerId] = useState("");
   const [paySig, setPaySig] = useState<string | null>(null);
-  const [paySigError, setPaySigError] = useState(false);
+    const [paySigError, setPaySigError] = useState(false);
+    /** Set when a delivery order is paid: asks whether to also mark it for delivery. */
+    const [deliveryConfirm, setDeliveryConfirm] = useState<{ id: string; orderNumber: string; totalMinor: number; method: string } | null>(null);
   const [customers, setCustomers] = useState<{ id: string; name: string | null }[]>([]);
 
   const load = useCallback(async () => {
@@ -309,7 +311,7 @@ export default function OrdersPanel() {
     setEditHold(null);
     toast(`Held order updated · ${toPesos(d.totalMinor)}`);
     await load();
-    setPayHold({ id: d.id, orderNumber: editHold.orderNumber, totalMinor: d.totalMinor });
+    setPayHold({ id: d.id, orderNumber: editHold.orderNumber, totalMinor: d.totalMinor, isDelivery: (editHold.status === "ON_HOLD" ? false : true) });
   };
 
   const addHoldLine = (productId: string) => {
@@ -327,32 +329,52 @@ export default function OrdersPanel() {
   };
 
   // ── On-process: pay a held order ──
-  const completeHold = async () => {
-    if (!payHold) return;
-    setError(null);
-    const tenderedMinor = Math.round(parseFloat(tendered || "0") * 100);
-    if (payMethod === "cash" && tenderedMinor < payHold.totalMinor) { setError("Tendered amount must cover the total"); return; }
-        if (payMethod === "credit" && !payCustomerId) { setError("Select a customer for utang"); return; }
-        if (payMethod === "credit" && !paySig) { setPaySigError(true); setError("Customer signature is required for utang — please sign"); return; }
-    const res = await fetch(`${API_URL}/admin/pos/holds/${payHold.id}/complete`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...adminHeaders() },
-      body: JSON.stringify({
-        paymentMethod: payMethod,
-        tenderedMinor: payMethod === "cash" ? tenderedMinor : undefined,
-        customerId: payMethod === "credit" ? payCustomerId : undefined,
-        signatureData: payMethod === "credit" ? paySig : undefined,
-        startAt: payMethod === "credit" ? (startAt || new Date().toISOString()) : undefined,
-        dueAt: payMethod === "credit" ? (dueAt || undefined) : undefined,
-      }),
-    });
-    const d = await res.json();
-    if (!res.ok) { setError(d?.message ?? "Complete failed"); return; }
-    setPayHold(null);
-    setTendered(""); setStartAt(""); setDueAt(""); setPayCustomerId("");
-    toast(`Held order ${d.orderNumber} completed${d.changeMinor ? ` · change ${toPesos(d.changeMinor)}` : ""}`);
-    void load();
-  };
+    /** Validate payment inputs (cash cover / credit customer + signature). Returns true when good. */
+    const payValidated = () => {
+      if (!payHold) return false;
+      const tenderedMinor = Math.round(parseFloat(tendered || "0") * 100);
+      if (payMethod === "cash" && tenderedMinor < payHold.totalMinor) { setError("Tendered amount must cover the total"); return false; }
+      if (payMethod === "credit" && !payCustomerId) { setError("Select a customer for utang"); return false; }
+      if (payMethod === "credit" && !paySig) { setPaySigError(true); setError("Customer signature is required for utang — please sign"); return false; }
+      return true;
+    };
+
+    /** Complete the order after payment. target "OUT_FOR_DELIVERY" → also send it out (delivery-tagged orders). */
+    const completeHold = async (target: "COMPLETED" | "OUT_FOR_DELIVERY") => {
+      if (!payHold || !payValidated()) return;
+      setError(null);
+      const tenderedMinor = Math.round(parseFloat(tendered || "0") * 100);
+      const res = await fetch(`${API_URL}/admin/pos/holds/${payHold.id}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...adminHeaders() },
+        body: JSON.stringify({
+          paymentMethod: payMethod,
+          tenderedMinor: payMethod === "cash" ? tenderedMinor : undefined,
+          customerId: payMethod === "credit" ? payCustomerId : undefined,
+          signatureData: payMethod === "credit" ? paySig : undefined,
+          startAt: payMethod === "credit" ? (startAt || new Date().toISOString()) : undefined,
+          dueAt: payMethod === "credit" ? (dueAt || undefined) : undefined,
+          sendForDelivery: target === "OUT_FOR_DELIVERY",
+        }),
+      });
+      const d = await res.json();
+      if (!res.ok) { setError(d?.message ?? "Complete failed"); return; }
+      setPayHold(null);
+      setDeliveryConfirm(null);
+      setTendered(""); setStartAt(""); setDueAt(""); setPayCustomerId(""); setPaySig(null); setPaySigError(false);
+      toast(`${d.orderNumber} ${d.status === "OUT_FOR_DELIVERY" ? "paid — sent for delivery" : "completed"}` + (d.changeMinor ? ` · change ${toPesos(d.changeMinor)}` : ""));
+      void load();
+    };
+
+    /** Complete button: for delivery-tagged orders, first ask "for delivery?" then confirm. */
+    const onPayComplete = () => {
+      if (!payHold || !payValidated()) return;
+      if (payHold.isDelivery) {
+        setDeliveryConfirm({ id: payHold.id, orderNumber: payHold.orderNumber, totalMinor: payHold.totalMinor, method: payMethod });
+      } else {
+        void completeHold("COMPLETED");
+      }
+    };
 
   const summaryOf = (o: AdminOrder) => `${o.orderNumber} · ${toPesos(o.totalMinor)} · ${o.customerName}`;
 
@@ -365,8 +387,8 @@ export default function OrdersPanel() {
                     {o.status === "ON_HOLD" && canWrite && (
             <>
               <button className="btn btn-sm btn-outline-warning" onClick={() => openEdit(o)}><i className="bi bi-pencil me-1"></i>Edit</button>
-              <button className="btn btn-sm btn-success" onClick={() => { setPayHold({ id: o.id, orderNumber: o.orderNumber, totalMinor: o.totalMinor }); setPayMethod("cash"); setPaySig(null); setPaySigError(false); setTendered(""); }}><i className="bi bi-cash me-1"></i>Pay</button>
-                            <button className="btn btn-sm btn-outline-success" onClick={() => { setPayHold({ id: o.id, orderNumber: o.orderNumber, totalMinor: o.totalMinor }); setPayMethod("credit"); setPaySig(null); setPaySigError(false); }}><i className="bi bi-journal me-1"></i>Utang</button>
+              <button className="btn btn-sm btn-success" onClick={() => { setPayHold({ id: o.id, orderNumber: o.orderNumber, totalMinor: o.totalMinor, isDelivery: Boolean(o.deliveryAddressLine1?.trim()) }); setPayMethod("cash"); setPaySig(null); setPaySigError(false); setTendered(""); }}><i className="bi bi-cash me-1"></i>Pay</button>
+                                                        <button className="btn btn-sm btn-outline-success" onClick={() => { setPayHold({ id: o.id, orderNumber: o.orderNumber, totalMinor: o.totalMinor, isDelivery: Boolean(o.deliveryAddressLine1?.trim()) }); setPayMethod("credit"); setPaySig(null); setPaySigError(false); }}><i className="bi bi-journal me-1"></i>Utang</button>
               {canVoidRefund && <button className="btn btn-sm btn-outline-danger" onClick={() => setConfirmAction({ orderId: o.id, kind: "voidHold" })}><i className="bi bi-pause-btn me-1"></i>Void</button>}
             </>
           )}
@@ -396,7 +418,7 @@ export default function OrdersPanel() {
                                                         {["CONFIRMED", "PREPARING", "READY"].includes(o.status) && (
                                                           <>
                                                             <button className="btn btn-sm btn-outline-warning" onClick={() => openEdit(o)} disabled={transitioning === o.id}><i className="bi bi-pencil me-1"></i>Edit</button>
-                                                            <button className="btn btn-sm btn-success" disabled={transitioning === o.id} onClick={() => { setPayHold({ id: o.id, orderNumber: o.orderNumber, totalMinor: o.totalMinor }); setPayMethod("cash"); setPaySig(null); setPaySigError(false); setTendered(""); }}><i className="bi bi-cash me-1"></i>Pay</button>
+                                                            <button className="btn btn-sm btn-success" disabled={transitioning === o.id} onClick={() => { setPayHold({ id: o.id, orderNumber: o.orderNumber, totalMinor: o.totalMinor, isDelivery: Boolean(o.deliveryAddressLine1?.trim()) }); setPayMethod("cash"); setPaySig(null); setPaySigError(false); setTendered(""); }}><i className="bi bi-cash me-1"></i>Pay</button>
                                                             {canVoidRefund && <button className="btn btn-sm btn-outline-danger" disabled={transitioning === o.id} onClick={() => setConfirmAction({ orderId: o.id, kind: "void" })}><i className="bi bi-x-circle me-1"></i>Void</button>}
                                                           </>
                                                         )}
@@ -806,7 +828,7 @@ export default function OrdersPanel() {
                 </div>
                 <div className="modal-footer">
                   <button className="btn btn-outline-secondary" onClick={() => setPayHold(null)}>Cancel</button>
-                  <button className="btn btn-success" onClick={completeHold}>Complete</button>
+                  <button className="btn btn-success" onClick={onPayComplete}>Complete</button>
                 </div>
               </div>
             </div>
@@ -816,7 +838,39 @@ export default function OrdersPanel() {
       )}
 
       {receiptOrder && <ReceiptModal orderId={receiptOrder} onClose={() => setReceiptOrder(null)} />}
-      {orderDetail && (
+
+            {/* Delivery confirm — payment collected on a delivery order: ask "for delivery?" then confirm */}
+            {deliveryConfirm && (
+              <>
+                <div className="modal fade show d-block" tabIndex={-1}>
+                  <div className="modal-dialog modal-dialog-centered">
+                    <div className="modal-content">
+                      <div className="modal-header">
+                        <h5 className="modal-title"><i className="bi bi-truck me-1"></i>Delivery for {deliveryConfirm.orderNumber}</h5>
+                        <button type="button" className="btn-close" onClick={() => setDeliveryConfirm(null)}></button>
+                      </div>
+                      <div className="modal-body">
+                        <p className="small">
+                          Payment collected: <strong>{deliveryConfirm.method === "cash" ? "Cash" : "Utang (credit)"}</strong> · {toPesos(deliveryConfirm.totalMinor)}
+                        </p>
+                        <p className="small text-muted mb-1">This order is tagged <span className="badge text-bg-primary">delivery</span>. Send it out for delivery?</p>
+                      </div>
+                      <div className="modal-footer d-flex gap-2">
+                        <button className="btn btn-outline-secondary flex-fill" onClick={() => { setDeliveryConfirm(null); void completeHold("COMPLETED"); }}>
+                          <i className="bi bi-check-lg me-1"></i>No — complete
+                        </button>
+                        <button className="btn btn-primary flex-fill" onClick={() => { setDeliveryConfirm(null); void completeHold("OUT_FOR_DELIVERY"); }}>
+                          <i className="bi bi-truck me-1"></i>Yes — for delivery
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div className="modal-backdrop fade show"></div>
+              </>
+            )}
+
+            {orderDetail && (
         <>
           <div className="modal fade show d-block" tabIndex={-1}>
             <div className="modal-dialog modal-dialog-centered">

@@ -471,3 +471,48 @@ test("markForDelivery: requires address, rejects non-completed, converts POS sal
     await cleanupFixture(fx.storeId, fx.customerId);
   }
 });
+
+test("completeHold sendForDelivery: delivery-tagged order → OUT_FOR_DELIVERY with payment captured; pickup stays COMPLETED", async () => {
+  const fx = await makeFixture();
+  try {
+    // 1. Hold a delivery-tagged order (deliveryType=delivery + address).
+    const held = await svc.hold(fx.storeId, "actorX", { items: [{ productId: fx.productId, quantity: 1 }] });
+    assert.equal(held.ok, true);
+    if (!held.ok) return;
+    const holdId = held.value.orderId;
+    await prisma.order.update({
+      where: { id: holdId },
+      data: { deliveryType: "delivery", deliveryAddressLine1: "123 Mabini St, QC" },
+    });
+
+    // 2. Complete with sendForDelivery=true → OUT_FOR_DELIVERY, cash collected.
+    const done = await svc.completeHold(fx.storeId, "actorX", holdId, {
+      paymentMethod: "cash", tenderedMinor: 10000, sendForDelivery: true,
+    });
+    assert.equal(done.ok, true);
+    if (!done.ok) return;
+    assert.equal(done.value.status, "OUT_FOR_DELIVERY");
+    const row = await prisma.order.findUnique({ where: { id: holdId } });
+    assert.equal(row?.status, "OUT_FOR_DELIVERY");
+    assert.equal(row?.paymentStatus, "COLLECTED");
+    const hist = await prisma.orderStatusHistory.findMany({ where: { orderId: holdId }, orderBy: { createdAt: "asc" } });
+    assert.equal(hist[hist.length - 1]!.toStatus, "OUT_FOR_DELIVERY");
+    assert.equal(hist[hist.length - 1]!.reason, "paid at counter → send for delivery");
+
+    // 3. Pickup order with sendForDelivery=true → stays COMPLETED (never routed to delivery).
+    const held2 = await svc.hold(fx.storeId, "actorX", { items: [{ productId: fx.productId, quantity: 1 }] });
+    assert.equal(held2.ok, true);
+    if (!held2.ok) return;
+    const hold2Id = held2.value.orderId;
+    const done2 = await svc.completeHold(fx.storeId, "actorX", hold2Id, {
+      paymentMethod: "cash", tenderedMinor: 10000, sendForDelivery: true,
+    });
+    assert.equal(done2.ok, true);
+    if (!done2.ok) return;
+    assert.equal(done2.value.status, "COMPLETED");
+    const row2 = await prisma.order.findUnique({ where: { id: hold2Id } });
+    assert.equal(row2?.status, "COMPLETED"); // pickup ignores sendForDelivery
+  } finally {
+    await cleanupFixture(fx.storeId, fx.customerId);
+  }
+});

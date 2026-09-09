@@ -435,10 +435,11 @@ export class AdminController {
             orderBy: { createdAt: "desc" },
             take: 200,
             select: {
-              id: true, orderNumber: true, status: true, totalMinor: true, currencyCode: true,
-              customerName: true, customerPhone: true, createdAt: true, paymentStatus: true, source: true,
-              deliveryType: true, paymentMethod: true, signatureData: true, signatureAt: true,
-            },
+                        id: true, orderNumber: true, status: true, totalMinor: true, currencyCode: true,
+                        customerName: true, customerPhone: true, createdAt: true, paymentStatus: true, source: true,
+                        deliveryType: true, paymentMethod: true, signatureData: true, signatureAt: true,
+                        deliveryAddressLine1: true,
+                      },
           });
           cacheSet(cacheKeyStr, list, 5_000);
                   return { orders: list, storeId };
