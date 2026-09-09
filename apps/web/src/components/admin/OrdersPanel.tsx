@@ -453,10 +453,11 @@ export default function OrdersPanel() {
                   return (
                     <>
                       <span className={`badge ${STATUS_BADGE[o.status] ?? "text-bg-secondary"} text-capitalize text-nowrap`}>
-                        {STATUS_LABEL[o.status] ?? o.status}
-                        {o.status === "RECEIVED" && isDelivHint(o) && <i className="bi bi-geo-alt ms-1"></i>}
-                      </span>
-                      {!isDelivHint(o) && <span className="badge text-bg-success ms-1" title="Pickup order — ready-for-pickup + complete at counter"><i className="bi bi-shop me-1"></i>pickup</span>}
+                                          {STATUS_LABEL[o.status] ?? o.status}
+                                          {o.status === "RECEIVED" && isDelivHint(o) && <i className="bi bi-geo-alt ms-1"></i>}
+                                        </span>
+                                        {isDelivHint(o) && <span className="badge text-bg-primary ms-1" title="Delivery order — send for delivery, courier delivers"><i className="bi bi-truck me-1"></i>delivery</span>}
+                                        {!isDelivHint(o) && <span className="badge text-bg-success ms-1" title="Pickup order — ready-for-pickup + complete at counter"><i className="bi bi-shop me-1"></i>pickup</span>}
                       {age && <span className={`badge ${age.tone} ms-1`} title={`Placed ${age.mins} min ago`}>{age.label}</span>}
                       {utang && <span className="badge text-bg-warning ms-1" title="Charged to utang"><i className="bi bi-journal-text me-1"></i>utang</span>}
                     </>
