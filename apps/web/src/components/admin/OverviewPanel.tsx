@@ -26,25 +26,33 @@ export default function OverviewPanel({ onNavigate, storeSlug, storeName }: Over
   const [utangMinor, setUtangMinor] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [partial, setPartial] = useState(false); // true when some widgets failed but page still renders
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    try {
-      const [sRes, dRes, iRes] = await Promise.all([
-        fetch(`${API_URL}/admin/analytics/status`, { headers: adminHeaders() }),
-        fetch(`${API_URL}/admin/analytics/daily?days=7`, { headers: adminHeaders() }),
-        fetch(`${API_URL}/admin/inventory?status=low`, { headers: adminHeaders() }),
-      ]);
-      if (!sRes.ok) throw new Error("Failed to load overview");
-      setStatus(((await sRes.json()).rows ?? []) as StatusRow[]);
-      setDaily((await dRes.json()).days ?? []);
-      if (iRes.ok) setLowStockCount(((await iRes.json()).items ?? []).length);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Load failed");
-    } finally {
-      setLoading(false);
+    setPartial(false);
+    // Each widget fetches independently — one failure never blanks the whole page.
+    const [sRes, dRes, iRes] = await Promise.all([
+      fetch(`${API_URL}/admin/analytics/status`, { headers: adminHeaders() }).catch(() => null),
+      fetch(`${API_URL}/admin/analytics/daily?days=7`, { headers: adminHeaders() }).catch(() => null),
+      fetch(`${API_URL}/admin/inventory?status=low`, { headers: adminHeaders() }).catch(() => null),
+    ]);
+    let failed = 0;
+    if (sRes?.ok) setStatus((await sRes.json()).rows ?? []);
+    else failed++;
+    if (dRes?.ok) setDaily((await dRes.json()).days ?? []);
+    else failed++;
+    if (iRes?.ok) setLowStockCount(((await iRes.json()).items ?? []).length);
+    else failed++;
+    if (failed === 3) {
+      setError("Failed to load overview");
+      setPartial(false);
+    } else if (failed > 0) {
+      setPartial(true); // page renders; banner says some widgets couldn't load
+      setError("Some widgets couldn't load — showing what's available.");
     }
+    setLoading(false);
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -91,7 +99,12 @@ export default function OverviewPanel({ onNavigate, storeSlug, storeName }: Over
         </div>
       </div>
 
-      {error && <div className="alert alert-danger py-2 small">{error}</div>}
+      {error && (
+        <div className={`alert ${partial ? "alert-warning" : "alert-danger"} py-2 small d-flex justify-content-between align-items-center mb-2`}>
+          <span>{error}</span>
+          <button className="btn btn-sm btn-outline-secondary ms-2" onClick={load} disabled={loading}><i className="bi bi-arrow-clockwise me-1"></i>Retry</button>
+        </div>
+      )}
 
       <div className="row g-3 mb-3">
         <div className="col-6 col-md-3">
