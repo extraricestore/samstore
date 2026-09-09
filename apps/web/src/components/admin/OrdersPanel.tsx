@@ -293,9 +293,8 @@ export default function OrdersPanel() {
       const isDeliv = (o.deliveryType ?? "delivery") === "delivery"; // legacy/online = delivery
       const editable = ["RECEIVED", "CONFIRMED", "ON_HOLD"].includes(o.status);
       return (
-        <div className="d-flex flex-wrap gap-1 align-items-center">
-          {looking(o)}
-          {/* Pending routing analysis — the pill already shows delivery/pickup hint; no separate chip. */}
+              <div className="d-flex flex-wrap gap-1 align-items-center">
+                {/* Pending routing analysis — the pill already shows delivery/pickup hint; no separate chip. */}
                     {o.status === "ON_HOLD" && canWrite && (
             <>
               <button className="btn btn-sm btn-outline-warning" onClick={() => openEdit(o)}><i className="bi bi-pencil me-1"></i>Edit</button>
