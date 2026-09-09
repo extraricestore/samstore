@@ -604,7 +604,7 @@ export default function PreOrdersPanel({ onNavigate }: { onNavigate?: (tab: stri
                       </div>
                       <div className="input-group input-group-sm" style={{ width: 104 }}>
                         <button className="btn btn-outline-secondary" onClick={() => setQty(l.product.id, l.quantity - 1)}>-</button>
-                        <input className="form-control text-center" value={l.quantity} readOnly />
+                        <input className="form-control text-center" type="number" min={1} value={l.quantity} onChange={(e) => { const v = parseInt(e.target.value, 10); if (v >= 1) setQty(l.product.id, v); }} />
                         <button className="btn btn-outline-secondary" onClick={() => setQty(l.product.id, l.quantity + 1)}>+</button>
                       </div>
                       <div className="fw-semibold small" style={{ width: 66, textAlign: "right" }}>{maybePrice(l.product.priceMinor * l.quantity)}</div>
@@ -711,7 +711,7 @@ export default function PreOrdersPanel({ onNavigate }: { onNavigate?: (tab: stri
                         <span className="flex-grow-1 small">{l.productName}</span>
                         <div className="input-group input-group-sm" style={{ width: 96 }}>
                           <button className="btn btn-outline-secondary" onClick={() => setPreLineQty(l.productId, l.quantity - 1)}>-</button>
-                          <input className="form-control text-center" value={l.quantity} readOnly />
+                          <input className="form-control text-center" type="number" min={1} value={l.quantity} onChange={(e) => { const v = parseInt(e.target.value, 10); if (v >= 1) setPreLineQty(l.productId, v); }} />
                           <button className="btn btn-outline-secondary" onClick={() => setPreLineQty(l.productId, l.quantity + 1)}>+</button>
                         </div>
                         <button className="btn btn-sm btn-outline-danger py-0" onClick={() => setPreLineQty(l.productId, 0)}><i className="bi bi-x"></i></button>
