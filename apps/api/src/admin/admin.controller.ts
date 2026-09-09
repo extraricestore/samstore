@@ -412,11 +412,12 @@ export class AdminController {
       if (to) (where.createdAt as Record<string, unknown>).lte = new Date(to);
     }
     if (customer) {
-      where.OR = [
-        { customerName: { contains: customer, mode: "insensitive" } },
-        { customerPhone: { contains: customer, mode: "insensitive" } },
-      ];
-    }
+          where.OR = [
+            { customerName: { contains: customer, mode: "insensitive" } },
+            { customerPhone: { contains: customer, mode: "insensitive" } },
+            { orderNumber: { contains: customer, mode: "insensitive" } },
+          ];
+        }
     const list = await prisma.order.findMany({
           where,
           orderBy: { createdAt: "desc" },
@@ -431,21 +432,40 @@ export class AdminController {
                 return { orders: list, storeId };
           }
 
-          /** GET /admin/orders/counts — per-status order counts (for tab badges). Cached 5s. */
-          @Get("orders/counts")
-          async orderCounts(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
-            const user = req.user;
-            requireView(user);
-            const storeId = await this.resolveStoreId(user, headerStoreId);
-            const key = cacheKey("orders-counts", storeId);
-            const hit = cacheGet<unknown>(key);
-            if (hit) return { counts: hit, storeId };
-            const groups = await prisma.order.groupBy({ by: ["status"], where: { storeId }, _count: { _all: true } });
-            const counts: Record<string, number> = {};
-            for (const g of groups) counts[g.status] = g._count._all;
-            cacheSet(key, counts, 5_000);
-            return { counts, storeId };
-          }
+          /** GET /admin/orders/counts — per-status order counts (for tab badges). Cached 5s.
+                        Accepts the SAME range/customer filters as the list so badges match the visible rows. */
+                    @Get("orders/counts")
+                    async orderCounts(@Req() req: Request & { user?: AuthPrincipal }, @Query("from") from?: string, @Query("to") to?: string, @Query("customer") customer?: string, @Headers("x-store-id") headerStoreId?: string) {
+                      const user = req.user;
+                      requireView(user);
+                      const storeId = await this.resolveStoreId(user, headerStoreId);
+                      for (const [key, val] of [["from", from], ["to", to]] as const) {
+                        if (val !== undefined && Number.isNaN(Date.parse(val))) {
+                          throw new HttpException({ type: "validation", errors: [`${key} must be an ISO date`] }, HttpStatus.UNPROCESSABLE_ENTITY);
+                        }
+                      }
+                      const key = cacheKey("orders-counts", storeId, from ?? "", to ?? "", customer ?? "");
+                      const hit = cacheGet<unknown>(key);
+                      if (hit) return { counts: hit, storeId };
+                      const where: Record<string, unknown> = { storeId };
+                      if (from || to) {
+                        where.createdAt = {};
+                        if (from) (where.createdAt as Record<string, unknown>).gte = new Date(from);
+                        if (to) (where.createdAt as Record<string, unknown>).lte = new Date(to);
+                      }
+                      if (customer) {
+                        where.OR = [
+                          { customerName: { contains: customer, mode: "insensitive" } },
+                          { customerPhone: { contains: customer, mode: "insensitive" } },
+                          { orderNumber: { contains: customer, mode: "insensitive" } },
+                        ];
+                      }
+                      const groups = await prisma.order.groupBy({ by: ["status"], where, _count: { _all: true } });
+                      const counts: Record<string, number> = {};
+                      for (const g of groups) counts[g.status] = g._count._all;
+                      cacheSet(key, counts, 5_000);
+                      return { counts, storeId };
+                    }
 
           /** GET /admin/orders/:id — full detail (items + history). */
   @Get("orders/:id")

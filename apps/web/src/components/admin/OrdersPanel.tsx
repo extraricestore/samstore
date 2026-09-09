@@ -37,6 +37,13 @@ const STATUS_BADGE: Record<string, string> = {
   FAILED_DELIVERY: "text-bg-danger",
 };
 
+/** Friendly, deduped status labels (used by the pill + dropdown + detail modal). */
+const STATUS_LABEL: Record<string, string> = {
+  RECEIVED: "Pending", CONFIRMED: "Confirmed", PREPARING: "Preparing", READY: "Ready",
+  OUT_FOR_DELIVERY: "Out for delivery", DELIVERED: "Delivered", ON_HOLD: "On hold",
+  COMPLETED: "Completed", CANCELLED: "Cancelled", FAILED_DELIVERY: "Failed delivery",
+};
+
 const TABS: { id: string; label: string; status?: string[] }[] = [
   { id: "today", label: "Today", status: undefined },
   { id: "pending", label: "Pending", status: ["RECEIVED"] },
@@ -111,11 +118,15 @@ export default function OrdersPanel() {
                         // Oldest-first in Pending (FIFO: the longest-waiting order is the most urgent).
                         if (tab === "pending") list = list.sort((a: AdminOrder, b: AdminOrder) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0));
                         setOrders(list);
-            // Per-tab counts (for badges) — fire-and-forget, never blocks the list.
-            fetch(`${API_URL}/admin/orders/counts`, { headers: adminHeaders() })
-              .then((r) => r.json())
-              .then((d) => d?.counts && setCounts(d.counts))
-              .catch(() => {});
+            // Per-tab counts (for badges) — same filters as the list, fire-and-forget, never blocks.
+                        const cq = new URLSearchParams();
+                        for (const [k, v] of [["from", q.get("from")], ["to", q.get("to")], ["customer", q.get("customer")]] as const) {
+                          if (v) cq.set(k, v);
+                        }
+                        fetch(`${API_URL}/admin/orders/counts?${cq.toString()}`, { headers: adminHeaders() })
+                          .then((r) => r.json())
+                          .then((d) => d?.counts && setCounts(d.counts))
+                          .catch(() => {});
       if (canWrite) {
         const p = await fetch(`${API_URL}/admin/products`, { headers: adminHeaders() }).then((r) => r.json());
         const c = await fetch(`${API_URL}/admin/customers`, { headers: adminHeaders() }).then((r) => r.json());
@@ -320,11 +331,11 @@ export default function OrdersPanel() {
               )}
               {/* Status dropdown — shown only where dedicated buttons don't cover all transitions (i.e. NOT on RECEIVED/CONFIRMED which have Receive/Cancel & routing buttons). */}
                             {next.length > 0 && !["RECEIVED", "CONFIRMED"].includes(o.status) && (
-                              <select className="form-select form-select-sm" style={{ width: 150 }} value="" disabled={transitioning === o.id} onChange={(e) => e.target.value && transition(o.id, e.target.value)}>
-                                <option value="" disabled>— {o.status} —</option>
-                                {next.map((s) => <option key={s} value={s}>{s}</option>)}
-                              </select>
-                            )}
+                                                          <select className="form-select form-select-sm" style={{ width: 150 }} value="" disabled={transitioning === o.id} onChange={(e) => e.target.value && transition(o.id, e.target.value)}>
+                                                            <option value="" disabled>{o.status === "FAILED_DELIVERY" ? "— Retry delivery —" : `— ${STATUS_LABEL[o.status] ?? o.status} —`}</option>
+                                                            {next.map((s) => <option key={s} value={s}>{s === "OUT_FOR_DELIVERY" && o.status === "FAILED_DELIVERY" ? "Retry delivery" : (STATUS_LABEL[s] ?? s)}</option>)}
+                                                          </select>
+                                                        )}
               <button className="btn btn-sm btn-outline-secondary" title="Receipt" onClick={() => setReceiptOrder(o.id)}><i className="bi bi-receipt"></i></button>
               {canVoidRefund && o.status === "COMPLETED" && (
                 <button className="btn btn-sm btn-outline-danger" title="Void/Refund" onClick={() => setConfirmAction({ orderId: o.id, kind: o.paymentStatus === "COLLECTED" ? "refund" : "void" })}><i className="bi bi-x-circle"></i></button>
@@ -360,19 +371,12 @@ export default function OrdersPanel() {
   };
 
     const looking = (o: AdminOrder) => {
-        // Friendly, deduped status pill. The raw status is already implied by the active tab;
-        // the pill adds the delivery/pickup + payment hints without echoing "RECEIVED" next to "Receive".
-        const label: Record<string, string> = {
-          RECEIVED: "Pending", CONFIRMED: "Confirmed", PREPARING: "Preparing", READY: "Ready",
-          OUT_FOR_DELIVERY: "Out for delivery", DELIVERED: "Delivered", ON_HOLD: "On hold",
-          COMPLETED: "Completed", CANCELLED: "Cancelled", FAILED_DELIVERY: "Failed delivery",
-        };
         const utang = o.paymentMethod === "credit";
               const age = ageOf(o);
               return (
                 <>
                   <span className={`badge ${STATUS_BADGE[o.status] ?? "text-bg-secondary"} text-capitalize text-nowrap`}>
-                    {label[o.status] ?? o.status}
+                    {STATUS_LABEL[o.status] ?? o.status}
                     {o.status === "RECEIVED" && isDelivHint(o) && <i className="bi bi-geo-alt ms-1"></i>}
                   </span>
                   {age && <span className={`badge ${age.tone} ms-1`} title={`Placed ${age.mins} min ago`}>{age.label}</span>}
@@ -462,14 +466,14 @@ export default function OrdersPanel() {
             <input className="form-control form-control-sm" style={{ width: 140 }} type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} />
           </>
         )}
-        <input className="form-control form-control-sm" style={{ width: 180 }} placeholder="Search customer name/phone…" value={customer} onChange={(e) => setCustomer(e.target.value)} />
+        <input className="form-control form-control-sm" style={{ width: 220 }} placeholder="Search order no. / customer / phone…" value={customer} onChange={(e) => setCustomer(e.target.value)} />
       </div>
 
       {/* Tabs */}
             <ul className="nav nav-pills mb-3 flex-wrap">
               {TABS.map((t) => {
-                const n = t.status ? t.status.reduce((s, st) => s + (counts[st] ?? 0), 0) : 0;
-                return (
+                              const n = t.status ? t.status.reduce((s, st) => s + (counts[st] ?? 0), 0) : Object.values(counts).reduce((s, c) => s + c, 0);
+                              return (
                   <li className="nav-item" key={t.id}>
                     <button className={`nav-link ${tab === t.id ? "active bg-primary" : ""}`} onClick={() => setTab(t.id)}>
                       {t.label}
@@ -668,7 +672,7 @@ export default function OrdersPanel() {
                                   <dl className="row mb-2">
                                     <dt className="col-5">Customer</dt><dd className="col-7">{orderDetail.customerName}</dd>
                                     <dt className="col-5">Phone</dt><dd className="col-7">{orderDetail.customerPhone || "—"}</dd>
-                                    <dt className="col-5">Status</dt><dd className="col-7"><span className="badge text-bg-secondary">{orderDetail.status}</span></dd>
+                                    <dt className="col-5">Status</dt><dd className="col-7"><span className={`badge ${STATUS_BADGE[orderDetail.status] ?? "text-bg-secondary"}`}>{STATUS_LABEL[orderDetail.status] ?? orderDetail.status}</span></dd>
                                     <dt className="col-5">Total</dt><dd className="col-7 fw-semibold">{toPesos(orderDetail.totalMinor)}</dd>
                                     {orderDetail.paymentStatus && <><dt className="col-5">Payment</dt><dd className="col-7">{orderDetail.paymentStatus}</dd></>}
                                     {orderDetail.paymentMethod && (
