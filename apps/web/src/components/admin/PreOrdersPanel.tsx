@@ -436,7 +436,7 @@ export default function PreOrdersPanel({ onNavigate }: { onNavigate?: (tab: stri
         <div className="d-flex justify-content-between align-items-center">
           <div>
             <span className={`fw-semibold ${pastDue ? "text-danger" : ""}`}>{p.orderNumber}</span>
-            <div className="small text-muted">{p.customerName} · {toPesos(p.totalMinor)}</div>
+            <div className="small text-muted">{p.customerName} · {maybePrice(p.totalMinor)}</div>
           </div>
           <span className={`badge ${PRE_STATUS_BADGE[p.status] ?? "text-bg-secondary"}`}>{p.status}</span>
         </div>
@@ -465,7 +465,7 @@ export default function PreOrdersPanel({ onNavigate }: { onNavigate?: (tab: stri
               <td className={pastDue ? "text-danger fw-semibold" : "fw-semibold"}>{p.orderNumber}</td>
               <td className="small">{p.customerName || "—"}</td>
               <td className="text-end">{itemCount(p)}</td>
-              <td className="text-end">{toPesos(p.totalMinor)}</td>
+              <td className="text-end">{maybePrice(p.totalMinor)}</td>
               <td className="small">{p.dueAt ? fmtDate(p.dueAt) : "—"}</td>
               <td><span className={`badge ${PRE_STATUS_BADGE[p.status] ?? "text-bg-secondary"}`}>{p.status}</span></td>
               <td className="text-end">
@@ -579,7 +579,7 @@ export default function PreOrdersPanel({ onNavigate }: { onNavigate?: (tab: stri
           <div className="position-sticky bottom-0 bg-white border-top shadow-sm d-flex align-items-center justify-content-between px-3 py-2" style={{ zIndex: 5 }}>
             <div>
               <div className="fw-bold">{buildCart.reduce((s, l) => s + l.quantity, 0)} item(s)</div>
-              <div className="text-muted small">{toPesos(buildSubtotal)}</div>
+              <div className="text-muted small">{maybePrice(buildSubtotal)}</div>
             </div>
             <button className="btn btn-primary btn-lg" disabled={buildCart.length === 0} onClick={() => setBuildStep("review")}>
               Review order <i className="bi bi-arrow-right ms-1"></i>
@@ -631,7 +631,7 @@ export default function PreOrdersPanel({ onNavigate }: { onNavigate?: (tab: stri
               {buildNewName.trim() && !buildCustomerId && <small className="text-muted">Customer is saved automatically when you save the pre-order.</small>}
 
               <div className="d-flex justify-content-between fw-bold fs-5 mt-2 mb-2">
-                <span>Total</span><span>{toPesos(buildSubtotal)}</span>
+                <span>Total</span><span>{maybePrice(buildSubtotal)}</span>
               </div>
               <div className="d-flex flex-wrap gap-2">
                 <button className="btn btn-outline-secondary flex-fill" onClick={() => setBuildStep("products")}>Back</button>
