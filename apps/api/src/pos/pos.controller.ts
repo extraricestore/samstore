@@ -56,8 +56,19 @@ export class PosController {
     return { ...result.value, storeId };
   }
 
-  /** POST /admin/pos/hold — create a held order (stock decremented, status ON_HOLD). */
-  @Post("hold")
+  /** POST /admin/pos/sells/:id/for-delivery — convert a completed POS sale into a delivery order (address required, payment already captured: cash=paid, credit=utang). */
+    @Post("sells/:id/for-delivery")
+    async forDelivery(@Req() req: Request & { user?: AuthPrincipal }, @Param("id") id: string, @Body() body: { addressLine1?: string; landmark?: string }, @Headers("x-store-id") headerStoreId?: string) {
+      const user = req.user;
+      if (!user) throw new HttpException({ type: "unauthorized", message: "Not authenticated" }, HttpStatus.UNAUTHORIZED);
+      const storeId = await this.guardAndStore(req, headerStoreId);
+      const result = await this.pos.markForDelivery(storeId, user.sub, id, body ?? {});
+      if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+      return result.value;
+    }
+
+    /** POST /admin/pos/hold — create a held order (stock decremented, status ON_HOLD). */
+    @Post("hold")
   async hold(@Req() req: Request & { user?: AuthPrincipal }, @Body() body: PosHoldRequest, @Headers("x-store-id") headerStoreId?: string) {
     const user = req.user!;
     const storeId = await this.guardAndStore(req, headerStoreId);

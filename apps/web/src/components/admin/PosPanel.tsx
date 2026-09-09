@@ -129,6 +129,12 @@ export default function PosPanel({ onNavigate }: { onNavigate?: (tab: string) =>
   const [holds, setHolds] = useState<HeldOrder[]>([]);
   const [voidTarget, setVoidTarget] = useState<HeldOrder | null>(null);
   const [step, setStep] = useState<"products" | "review" | "payment" | "done">("products");
+  // For delivery: convert the completed sale into a delivery-pipeline order.
+  const [deliverTarget, setDeliverTarget] = useState<LastSale | null>(null);
+  const [delivAddress, setDelivAddress] = useState("");
+  const [delivLandmark, setDelivLandmark] = useState("");
+  const [delivBusy, setDelivBusy] = useState(false);
+  const [delivDone, setDelivDone] = useState(false);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [customerId, setCustomerId] = useState("");
   const [newName, setNewName] = useState("");
@@ -303,6 +309,28 @@ export default function PosPanel({ onNavigate }: { onNavigate?: (tab: string) =>
     setCart([]); setCustomerId(""); setNewName(""); setNewPhone("");
     setTendered(""); setStartAt(""); setDueAt(""); setWorkingHoldId(null);
     setUsePoints(false); setCreditSig(null); setCreditSigError(false);
+    setDelivDone(false);
+  };
+
+  /** Mark the completed sale for delivery (address required; courier portal shows it). */
+  const saveDelivery = async () => {
+    if (!deliverTarget) return;
+    if (delivAddress.trim().length < 3) { setError("Delivery address is required"); return; }
+    setDelivBusy(true); setError(null);
+    try {
+      const res = await fetch(`${API_URL}/admin/pos/sells/${deliverTarget.orderId}/for-delivery`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...adminHeaders() },
+        body: JSON.stringify({ addressLine1: delivAddress.trim(), landmark: delivLandmark.trim() || undefined }),
+      });
+      const d = await res.json();
+      if (!res.ok) { setError(d?.message ?? "Failed to mark for delivery"); return; }
+      toast(`${d.orderNumber} marked for delivery`);
+      setDeliverTarget(null);
+      setDelivDone(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to mark for delivery");
+    } finally { setDelivBusy(false); }
   };
 
   const categories = [...new Set(products.map((p) => p.category?.name).filter(Boolean))] as string[];
@@ -320,6 +348,38 @@ export default function PosPanel({ onNavigate }: { onNavigate?: (tab: string) =>
       <h1 className="h4 mb-2"><i className="bi bi-cash-register me-2"></i>POS</h1>
       {error && <div className="alert alert-danger py-2 small">{error}</div>}
       {receiptOrder && <ReceiptModal orderId={receiptOrder} onClose={() => setReceiptOrder(null)} />}
+
+      {/* For delivery address modal */}
+      {deliverTarget && (
+        <>
+          <div className="modal fade show d-block" tabIndex={-1}>
+            <div className="modal-dialog modal-dialog-centered">
+              <div className="modal-content">
+                <div className="modal-header">
+                  <h5 className="modal-title"><i className="bi bi-truck me-1"></i>Delivery for {deliverTarget.orderNumber}</h5>
+                  <button type="button" className="btn-close" onClick={() => setDeliverTarget(null)}></button>
+                </div>
+                <div className="modal-body">
+                  <p className="small text-muted mb-2">
+                    Payment: <strong>{deliverTarget.paymentMethod === "cash" ? "Paid (cash)" : "Utang (credit)"}</strong> — order joins For Delivery.
+                  </p>
+                  <label className="form-label small">Delivery address <span className="text-danger">*</span></label>
+                  <textarea className="form-control mb-2" rows={2} placeholder="Street, barangay, city…" value={delivAddress} onChange={(e) => setDelivAddress(e.target.value)} />
+                  <label className="form-label small">Landmark (optional)</label>
+                  <input className="form-control" placeholder="e.g. near 7-Eleven, white gate" value={delivLandmark} onChange={(e) => setDelivLandmark(e.target.value)} />
+                </div>
+                <div className="modal-footer">
+                  <button className="btn btn-outline-secondary" onClick={() => setDeliverTarget(null)}>Cancel</button>
+                  <button className="btn btn-primary" disabled={delivBusy || delivAddress.trim().length < 3} onClick={saveDelivery}>
+                    {delivBusy ? "Sending…" : <><i className="bi bi-truck me-1"></i>Mark for delivery</>}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div className="modal-backdrop fade show"></div>
+        </>
+      )}
 
       {/* ── SELL ── */}
           {/* step indicator */}
@@ -342,11 +402,14 @@ export default function PosPanel({ onNavigate }: { onNavigate?: (tab: string) =>
                 )}
                 {lastSale.paymentMethod === "credit" && <p className="mb-2 text-warning">Charged to credit (utang)</p>}
                 <div className="d-grid gap-2">
-                  <button className="btn btn-primary btn-lg" onClick={() => { setLastSale(null); setStep("products"); }}>
+                  <button className="btn btn-primary btn-lg" onClick={() => { setLastSale(null); resetSale(); setStep("products"); }}>
                     <i className="bi bi-plus-lg me-1"></i>New sale
                   </button>
                   <button className="btn btn-outline-secondary" onClick={() => setReceiptOrder(lastSale.orderId)}>
                     <i className="bi bi-printer me-1"></i>Print receipt
+                  </button>
+                  <button className="btn btn-outline-primary" disabled={delivDone} onClick={() => { setDeliverTarget(lastSale); setDelivAddress(""); setDelivLandmark(""); setError(null); }}>
+                    <i className="bi bi-truck me-1"></i>{delivDone ? "Marked for delivery ✓" : "For delivery"}
                   </button>
                 </div>
               </div>

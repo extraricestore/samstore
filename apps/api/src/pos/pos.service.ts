@@ -293,6 +293,41 @@ export class PosService {
     return { ok: true, value: { orderId: id, orderNumber, totalMinor: totals.totalMinor } };
   }
 
+  /** W2: convert a completed POS sale into a delivery order (address required).
+      Payment was already captured at the counter: cash → COLLECTED (paid), credit → PENDING (utang). */
+  async markForDelivery(
+    storeId: string,
+    actorId: string,
+    orderId: string,
+    input: { addressLine1?: string; landmark?: string },
+  ): Promise<PosResult<{ id: string; status: string; orderNumber: string }>> {
+    const address = input.addressLine1?.trim() ?? "";
+    if (address.length < 3) {
+      return { ok: false, error: { type: "validation", errors: ["Delivery address (min 3 chars) is required"] } };
+    }
+    const order = await prisma.order.findFirst({ where: { storeId, id: orderId, source: "pos" } });
+    if (!order) return { ok: false, error: { type: "not_found", message: "POS sale not found" } };
+    if (order.status !== "COMPLETED") {
+      return { ok: false, error: { type: "conflict", message: `Only completed POS sales can be marked for delivery (status: ${order.status})` } };
+    }
+    await prisma.$transaction(async (tx) => {
+      await tx.order.update({
+        where: { id: orderId },
+        data: {
+          status: "OUT_FOR_DELIVERY",
+          deliveryType: "delivery",
+          deliveryAddressLine1: address,
+          ...(input.landmark?.trim() ? { landmark: input.landmark.trim() } : {}),
+        },
+      });
+      await tx.orderStatusHistory.create({
+        data: { orderId, storeId, fromStatus: "COMPLETED", toStatus: "OUT_FOR_DELIVERY", reason: "POS sale marked for delivery", actorType: "pos", actorId },
+      });
+    }, { timeout: 30_000 });
+    cacheBust(cacheKey("orders", storeId));
+    return { ok: true, value: { id: orderId, status: "OUT_FOR_DELIVERY", orderNumber: order.orderNumber } };
+  }
+
   async listHolds(storeId: string) {
     return prisma.order.findMany({
       where: { storeId, status: "ON_HOLD", source: "pos" },

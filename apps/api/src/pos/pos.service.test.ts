@@ -426,3 +426,48 @@ test("completeHold credit requires signature; with signature + redeem works", as
     await cleanupFixture(fx.storeId, fx.customerId);
   }
 });
+
+test("markForDelivery: requires address, rejects non-completed, converts POS sale to OUT_FOR_DELIVERY", async () => {
+  const fx = await makeFixture();
+  try {
+    // 1. Short/missing address rejected.
+    const noAddr = await svc.markForDelivery(fx.storeId, "actorX", "x", { addressLine1: "ab" });
+    assert.equal(noAddr.ok, false);
+    if (!noAddr.ok) assert.equal(noAddr.error.type, "validation");
+
+    // 2. Make a completed POS sale first.
+    const sale = await svc.sell(fx.storeId, "actorX", {
+      items: [{ productId: fx.productId, quantity: 1 }],
+      paymentMethod: "cash",
+      tenderedMinor: 10000,
+    });
+    assert.equal(sale.ok, true);
+    if (!sale.ok) return;
+    const orderId = sale.value.orderId;
+    const row0 = await prisma.order.findUnique({ where: { id: orderId } });
+    assert.equal(row0?.status, "COMPLETED");
+
+    // 3. Convert → OUT_FOR_DELIVERY with address + deliveryType.
+    const conv = await svc.markForDelivery(fx.storeId, "actorX", orderId, { addressLine1: "123 Mabini St, QC", landmark: "near gate" });
+    assert.equal(conv.ok, true);
+    if (!conv.ok) return;
+    assert.equal(conv.value.status, "OUT_FOR_DELIVERY");
+    const row = await prisma.order.findUnique({ where: { id: orderId } });
+    assert.equal(row?.status, "OUT_FOR_DELIVERY");
+    assert.equal(row?.deliveryType, "delivery");
+    assert.equal(row?.deliveryAddressLine1, "123 Mabini St, QC");
+    assert.equal(row?.landmark, "near gate");
+    // Payment preserved (cash sale → collected/paid).
+    assert.equal(row?.paymentStatus, "COLLECTED");
+    const hist = await prisma.orderStatusHistory.findMany({ where: { orderId }, orderBy: { createdAt: "asc" } });
+    assert.equal(hist[hist.length - 1]!.toStatus, "OUT_FOR_DELIVERY");
+    assert.equal(hist[hist.length - 1]!.reason, "POS sale marked for delivery");
+
+    // 4. Re-converting an OUT_FOR_DELIVERY order is rejected.
+    const again = await svc.markForDelivery(fx.storeId, "actorX", orderId, { addressLine1: "elsewhere" });
+    assert.equal(again.ok, false);
+    if (!again.ok) assert.equal(again.error.type, "conflict");
+  } finally {
+    await cleanupFixture(fx.storeId, fx.customerId);
+  }
+});
