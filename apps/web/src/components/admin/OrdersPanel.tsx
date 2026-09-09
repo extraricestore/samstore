@@ -385,19 +385,20 @@ export default function OrdersPanel() {
   };
 
     const looking = (o: AdminOrder) => {
-        const utang = o.paymentMethod === "credit";
-              const age = ageOf(o);
-              return (
-                <>
-                  <span className={`badge ${STATUS_BADGE[o.status] ?? "text-bg-secondary"} text-capitalize text-nowrap`}>
-                    {STATUS_LABEL[o.status] ?? o.status}
-                    {o.status === "RECEIVED" && isDelivHint(o) && <i className="bi bi-geo-alt ms-1"></i>}
-                  </span>
-                  {age && <span className={`badge ${age.tone} ms-1`} title={`Placed ${age.mins} min ago`}>{age.label}</span>}
-                  {utang && <span className="badge text-bg-warning ms-1" title="Charged to utang"><i className="bi bi-journal-text me-1"></i>utang</span>}
-                </>
-              );
-            };
+            const utang = o.paymentMethod === "credit";
+                  const age = ageOf(o);
+                  return (
+                    <>
+                      <span className={`badge ${STATUS_BADGE[o.status] ?? "text-bg-secondary"} text-capitalize text-nowrap`}>
+                        {STATUS_LABEL[o.status] ?? o.status}
+                        {o.status === "RECEIVED" && isDelivHint(o) && <i className="bi bi-geo-alt ms-1"></i>}
+                      </span>
+                      {!isDelivHint(o) && <span className="badge text-bg-success ms-1" title="Pickup order — ready-for-pickup + complete at counter"><i className="bi bi-shop me-1"></i>pickup</span>}
+                      {age && <span className={`badge ${age.tone} ms-1`} title={`Placed ${age.mins} min ago`}>{age.label}</span>}
+                      {utang && <span className="badge text-bg-warning ms-1" title="Charged to utang"><i className="bi bi-journal-text me-1"></i>utang</span>}
+                    </>
+                  );
+                };
 
     /** Opens the Details modal and lazily loads the signature + line items (list endpoint omits them but the detail endpoint returns them). */
         const openDetail = (o: AdminOrder) => {
