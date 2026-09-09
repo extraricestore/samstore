@@ -17,6 +17,14 @@ test("forward transitions are allowed", () => {
   assert.equal(canTransition("OUT_FOR_DELIVERY", "DELIVERED"), true);
 });
 
+test("ready-for-pickup step: CONFIRMED→READY, READY→COMPLETED (pickup), READY→OUT_FOR_DELIVERY (delivery)", () => {
+  assert.equal(canTransition("CONFIRMED", "READY"), true);
+  assert.equal(canTransition("READY", "COMPLETED"), true);
+  assert.equal(canTransition("READY", "OUT_FOR_DELIVERY"), true);
+  // Delivery invariant: READY→COMPLETED is allowed at state level but guarded server-side for delivery-type orders.
+  assert.equal(canTransition("COMPLETED", "READY"), false);
+});
+
 test("skipping states is rejected", () => {
   assert.equal(canTransition("RECEIVED", "DELIVERED"), false);
   assert.equal(canTransition("RECEIVED", "OUT_FOR_DELIVERY"), false);

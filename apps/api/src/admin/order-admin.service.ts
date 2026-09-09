@@ -24,6 +24,10 @@ export class OrderAdminService {
     if (!order) return { ok: false, error: { type: "not_found", message: "Order not found" } };
 
     const from = order.status as OrderState;
+    // Delivery orders must stay in the delivery pipeline — COMPLETED only via courier DELIVERED (or prepaid payment).
+    if (toStatus === "COMPLETED" && (order.deliveryType === "delivery" || (order.deliveryAddressLine1 && order.deliveryAddressLine1.trim().length > 0))) {
+      return { ok: false, error: { type: "conflict", message: "Delivery orders must go through the delivery pipeline" } };
+    }
     try {
       assertTransition(from, toStatus, reason);
     } catch (e) {
@@ -64,7 +68,7 @@ export class OrderAdminService {
         storeId,
         customerPhone: order.customerPhone,
         psid: null, // no verified PSID yet — suppressed path
-        template: toStatus === "OUT_FOR_DELIVERY" ? "order_out_for_delivery" : "order_status",
+        template: toStatus === "OUT_FOR_DELIVERY" ? "order_out_for_delivery" : toStatus === "READY" ? "order_ready_for_pickup" : toStatus === "DELIVERED" ? "order_delivered" : "order_status",
         data: { orderNumber: order.orderNumber, status: toStatus },
       });
     }
@@ -211,7 +215,7 @@ export class OrderAdminService {
     if (order.deliveryType === "delivery" || (order.deliveryAddressLine1 && order.deliveryAddressLine1.trim().length > 0)) {
       return { ok: false, error: { type: "conflict", message: "Delivery orders must go through the delivery pipeline" } };
     }
-    if (!["RECEIVED", "CONFIRMED"].includes(order.status)) {
+    if (!["RECEIVED", "CONFIRMED", "READY"].includes(order.status)) {
       return { ok: false, error: { type: "conflict", message: `Cannot complete an order in ${order.status}` } };
     }
     await prisma.$transaction(async (tx) => {

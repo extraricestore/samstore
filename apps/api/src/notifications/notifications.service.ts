@@ -13,7 +13,7 @@ export interface NotificationPayload {
   customerPhone?: string | null;
   customerEmail?: string | null;
   psid?: string | null; // Messenger PSID when known
-  template: "order_received" | "order_status" | "order_out_for_delivery" | "order_delivered" | "voucher_available";
+  template: "order_received" | "order_status" | "order_out_for_delivery" | "order_delivered" | "order_ready_for_pickup" | "voucher_available";
   data: Record<string, string | number>;
 }
 
@@ -26,6 +26,7 @@ export class NotificationsService {
       order_status: "Order {orderNumber} is now {status}.",
       order_out_for_delivery: "Order {orderNumber} is out for delivery — enjoy!",
       order_delivered: "Order {orderNumber} has been delivered. Thank you!",
+      order_ready_for_pickup: "Order {orderNumber} is ready for pickup — come get it!",
       voucher_available: "Use voucher {code} for {discount} off your next order!",
     };
     let text = tpl[template] ?? template;
