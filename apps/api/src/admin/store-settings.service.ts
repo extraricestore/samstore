@@ -20,6 +20,7 @@ export interface StoreSettingsInput {
   receiptHeader?: string | null; // P11
   receiptFooter?: string | null; // P11
   showVatLabel?: boolean; // P11
+  dailySalesTargetMinor?: number; // Overview: daily sales target (0 = off)
   hidePricePreOrder?: boolean; // P11: hide per-product prices in Pre Orders screen
 }
 
@@ -58,6 +59,7 @@ export class StoreSettingsService {
         receiptHeader: store.settings?.receiptHeader ?? null,
         receiptFooter: store.settings?.receiptFooter ?? null,
         showVatLabel: store.settings?.showVatLabel ?? true,
+        dailySalesTargetMinor: store.settings?.dailySalesTargetMinor ?? 0,
         hidePricePreOrder: store.settings?.hidePricePreOrder ?? false,
       },
     };
@@ -95,6 +97,7 @@ export class StoreSettingsService {
         ...(input.receiptHeader !== undefined ? { receiptHeader: input.receiptHeader } : {}),
         ...(input.receiptFooter !== undefined ? { receiptFooter: input.receiptFooter } : {}),
         ...(input.showVatLabel !== undefined ? { showVatLabel: input.showVatLabel } : {}),
+        ...(input.dailySalesTargetMinor !== undefined ? { dailySalesTargetMinor: input.dailySalesTargetMinor } : {}),
         ...(input.hidePricePreOrder !== undefined ? { hidePricePreOrder: input.hidePricePreOrder } : {}),
       },
       create: {
@@ -113,6 +116,7 @@ export class StoreSettingsService {
         receiptHeader: input.receiptHeader ?? null,
         receiptFooter: input.receiptFooter ?? null,
         showVatLabel: input.showVatLabel ?? true,
+        dailySalesTargetMinor: input.dailySalesTargetMinor ?? 0,
         hidePricePreOrder: input.hidePricePreOrder ?? false,
       },
     });

@@ -27,6 +27,7 @@ interface StoreSettings {
     receiptHeader: string | null;
     receiptFooter: string | null;
     showVatLabel: boolean;
+        dailySalesTargetMinor: number;
         hidePricePreOrder: boolean;
       };
     }
@@ -48,7 +49,8 @@ export default function SettingsPanel() {
   const [deliveryEnabled, setDeliveryEnabled] = useState(true);
   const [pickupEnabled, setPickupEnabled] = useState(false);
   const [showVat, setShowVat] = useState(true);
-  const [hidePrePrice, setHidePrePrice] = useState(false);
+    const [hidePrePrice, setHidePrePrice] = useState(false);
+    const [dailyTargetPesos, setDailyTargetPesos] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -78,7 +80,8 @@ export default function SettingsPanel() {
       setDeliveryEnabled(d.settings.deliveryEnabled);
       setPickupEnabled(d.settings.pickupEnabled);
       setShowVat(d.settings.showVatLabel);
-      setHidePrePrice(d.settings.hidePricePreOrder ?? false);
+            setHidePrePrice(d.settings.hidePricePreOrder ?? false);
+            setDailyTargetPesos((d.settings.dailySalesTargetMinor ?? 0) > 0 ? ((d.settings.dailySalesTargetMinor ?? 0) / 100).toString() : "");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Load failed");
     } finally {
@@ -111,8 +114,9 @@ export default function SettingsPanel() {
           receiptHeader: form.receiptHeader || null,
           receiptFooter: form.receiptFooter || null,
           showVatLabel: showVat,
-                    hidePricePreOrder: hidePrePrice,
-                  }),
+                              hidePricePreOrder: hidePrePrice,
+                              dailySalesTargetMinor: Math.round(parseFloat(dailyTargetPesos || "0") * 100),
+                            }),
       });
       const body = await res.json();
       if (!res.ok) {
@@ -249,9 +253,13 @@ export default function SettingsPanel() {
                               <h6 className="fw-bold">POS / Receipt settings</h6>
                               <div className="row g-3 mt-1">
                                 <div className="col-md-4">
-                                  <label className="form-label small">Default utang credit limit (₱)</label>
-                                  <input className="form-control" type="number" step="0.01" min="0" value={form.creditLimitPesos} onChange={(e) => setForm({ ...form, creditLimitPesos: e.target.value })} placeholder="0 = credit disabled" />
-                                </div>
+                                                                  <label className="form-label small">Default utang credit limit (₱)</label>
+                                                                  <input className="form-control" type="number" step="0.01" min="0" value={form.creditLimitPesos} onChange={(e) => setForm({ ...form, creditLimitPesos: e.target.value })} placeholder="0 = credit disabled" />
+                                                                </div>
+                                                                <div className="col-md-4">
+                                                                  <label className="form-label small">Daily sales target (₱) — shown on Overview</label>
+                                                                  <input className="form-control" type="number" step="0.01" min="0" value={dailyTargetPesos} onChange={(e) => setDailyTargetPesos(e.target.value)} placeholder="0 = off" />
+                                                                </div>
                                 <div className="col-md-8">
                                                                   <div className="form-check form-switch">
                                                                     <input className="form-check-input" type="checkbox" id="vat" checked={showVat} onChange={(e) => setShowVat(e.target.checked)} />

@@ -181,6 +181,7 @@ model StoreSettings {
   receiptHeader            String? // P11: printed at top of receipts
   receiptFooter            String? // P11: printed at bottom
   showVatLabel             Boolean  @default(true) // P11: display-only VAT note (decision #2)
+  dailySalesTargetMinor    Int      @default(0) // Overview: daily sales target (0 = off)
   hidePricePreOrder        Boolean  @default(false) // Hide per-product prices in Pre Orders screen
   closedStoreMessage       String?
   createdAt                DateTime @default(now())
