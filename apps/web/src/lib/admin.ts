@@ -34,6 +34,17 @@ export interface AdminOrder {
   paymentMethod?: string;
   signatureData?: string;
   signatureAt?: string;
+  // Detail-only (populated by GET /admin/orders/:id)
+  deliveryAddressLine1?: string | null;
+  deliveryAddressLine2?: string | null;
+  landmark?: string | null;
+  notes?: string | null;
+  subtotalMinor?: number;
+  deliveryFeeMinor?: number;
+  discountMinor?: number;
+  items?: { productName: string; quantity: number; lineTotalMinor: number }[];
+  statusHistory?: { fromStatus: string | null; toStatus: string; createdAt: string; reason?: string | null; actorType?: string }[];
+  claimTokens?: { token: string; usedAt: string | null }[];
 }
 
 /** Loads the admin token from session storage (client-side only). */

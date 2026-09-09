@@ -60,6 +60,17 @@ interface ProductOption { id: string; name: string; sku: string }
 const toPesos = (m: number) => `₱${(m / 100).toFixed(2)}`;
 const dayRange = (d: Date) => ({ from: new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0).toISOString(), to: new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59).toISOString() });
 
+/** Pipeline KPI cards — label, count (filled from live counts below), tone, tab to jump to. */
+type PipelineKpi = [label: string, n: number, tone: string, go: () => void];
+function buildPipelineKpis(counts: Record<string, number>, setTab: (t: string) => void): PipelineKpi[] {
+  return [
+    ["To receive", counts["RECEIVED"] ?? 0, "text-bg-info", () => setTab("pending")],
+    ["In progress", (counts["CONFIRMED"] ?? 0) + (counts["PREPARING"] ?? 0) + (counts["READY"] ?? 0) + (counts["ON_HOLD"] ?? 0), "text-bg-warning", () => setTab("onprocess")],
+    ["Out for delivery", counts["OUT_FOR_DELIVERY"] ?? 0, "text-bg-dark", () => setTab("fordelivery")],
+    ["Delivered · COD due", counts["DELIVERED"] ?? 0, "text-bg-success", () => setTab("delivered")],
+  ];
+}
+
 export default function OrdersPanel() {
   const role = getAdminRole();
   const canVoidRefund = roleCan(role, "voidRefund");
@@ -69,6 +80,11 @@ export default function OrdersPanel() {
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
   const [customer, setCustomer] = useState("");
+  const [sourceFilter, setSourceFilter] = useState(""); // "" | online | pos | PRE_ORDER
+  const [paymentFilter, setPaymentFilter] = useState(""); // "" | cod | credit
+  const [fulfillmentFilter, setFulfillmentFilter] = useState(""); // "" | delivery | pickup
+  const [selected, setSelected] = useState<Set<string>>(new Set()); // batch mode
+  const [autoRefresh, setAutoRefresh] = useState(false);
   const [orders, setOrders] = useState<AdminOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -111,6 +127,9 @@ export default function OrdersPanel() {
         if (customTo) q.set("to", new Date(new Date(customTo).getTime() + 86_399_000).toISOString());
       }
       if (customer.trim()) q.set("customer", customer.trim());
+      if (sourceFilter) q.set("source", sourceFilter);
+      if (paymentFilter) q.set("payment", paymentFilter);
+      if (fulfillmentFilter) q.set("fulfillment", fulfillmentFilter);
             const res = await fetch(`${API_URL}/admin/orders?${q.toString()}`, { headers: adminHeaders() });
                         if (!res.ok) throw new Error("Failed to load orders");
                         const data = await res.json();
@@ -120,9 +139,9 @@ export default function OrdersPanel() {
                         setOrders(list);
             // Per-tab counts (for badges) — same filters as the list, fire-and-forget, never blocks.
                         const cq = new URLSearchParams();
-                        for (const [k, v] of [["from", q.get("from")], ["to", q.get("to")], ["customer", q.get("customer")]] as const) {
-                          if (v) cq.set(k, v);
-                        }
+                                                for (const [k, v] of [["from", q.get("from")], ["to", q.get("to")], ["customer", q.get("customer")], ["source", q.get("source")], ["payment", q.get("payment")], ["fulfillment", q.get("fulfillment")]] as const) {
+                                                  if (v) cq.set(k, v);
+                                                }
                         fetch(`${API_URL}/admin/orders/counts?${cq.toString()}`, { headers: adminHeaders() })
                           .then((r) => r.json())
                           .then((d) => d?.counts && setCounts(d.counts))
@@ -138,9 +157,53 @@ export default function OrdersPanel() {
     } finally {
       setLoading(false);
     }
-  }, [tab, range, customFrom, customTo, customer, canWrite]);
+  }, [tab, range, customFrom, customTo, customer, canWrite, sourceFilter, paymentFilter, fulfillmentFilter]);
 
-  useEffect(() => { load(); }, [load]);
+    useEffect(() => { load(); }, [load]);
+
+    // Auto-refresh (30s) — persisted per browser, like Overview.
+    useEffect(() => {
+      try { setAutoRefresh(localStorage.getItem("orders.autoRefresh") === "1"); } catch { /* ignore */ }
+    }, []);
+    useEffect(() => {
+      if (!autoRefresh) return;
+      const id = setInterval(() => { void load(); }, 30_000);
+      return () => clearInterval(id);
+    }, [autoRefresh, load]);
+
+    const toggleSelect = (id: string) => {
+      const next = new Set(selected);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      setSelected(next);
+    };
+    const clearSelection = () => setSelected(new Set());
+
+    // ── Batch actions ─────────────────────────────────────────────
+    const selOrders = () => orders.filter((o) => selected.has(o.id));
+    const selAll = (pred: (o: AdminOrder) => boolean) => {
+      const s = selOrders();
+      return s.length > 0 && s.every(pred);
+    };
+    /** Run one async action per selected order (parallel), then reload + clear. */
+    const runBatch = async (label: string, fn: (o: AdminOrder) => Promise<void>) => {
+      const s = selOrders();
+      if (s.length === 0) return;
+      setTransitioning("batch");
+      setError(null);
+      try {
+        await Promise.all(s.map(fn));
+        toast(`${label} · ${s.length} order${s.length > 1 ? "s" : ""}`);
+        setSelected(new Set());
+        void load();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : `${label} failed`);
+      } finally { setTransitioning(null); }
+    };
+    const canBatchReceive = selAll((o) => o.status === "RECEIVED");
+    const canBatchCancel = selAll((o) => ["RECEIVED", "CONFIRMED", "PREPARING", "READY", "ON_HOLD"].includes(o.status));
+    const canBatchSend = selAll((o) => (o.deliveryType ?? "delivery") === "delivery" && ["CONFIRMED", "PREPARING", "READY"].includes(o.status));
+    const canBatchPickup = selAll((o) => (o.deliveryType ?? "delivery") !== "delivery" && o.status === "READY");
+    const canBatchDelivered = selAll((o) => o.status === "OUT_FOR_DELIVERY");
 
   const transition = async (orderId: string, toStatus: string) => {
     if (toStatus === "CANCELLED" || toStatus === "FAILED_DELIVERY") { setPendingReason({ orderId, to: toStatus }); return; }
@@ -402,14 +465,16 @@ export default function OrdersPanel() {
 
     /** Opens the Details modal and lazily loads the signature + line items (list endpoint omits them but the detail endpoint returns them). */
         const openDetail = (o: AdminOrder) => {
-                  setOrderDetail(o);
-                  setDetailSignature(null);
-                  setDetailItems(null);
-                  setDetailHistory(null);
-                  setDetailToken(null);
-                  fetch(`${API_URL}/admin/orders/${o.id}`, { headers: adminHeaders() })
-                    .then((r) => r.json())
-                    .then((d) => {
+                          setOrderDetail(o);
+                          setDetailSignature(null);
+                          setDetailItems(null);
+                          setDetailHistory(null);
+                          setDetailToken(null);
+                          fetch(`${API_URL}/admin/orders/${o.id}`, { headers: adminHeaders() })
+                            .then((r) => r.json())
+                            .then((d) => {
+                              // Merge full detail into the row so the modal has address/notes/breakdown.
+                              setOrderDetail({ ...o, ...(d as AdminOrder) });
                       setDetailSignature(typeof d?.signatureData === "string" ? (d.signatureData as string) : null);
                       setDetailItems(Array.isArray(d?.items) ? (d.items as { productName: string; quantity: number; lineTotalMinor: number }[]) : []);
                       setDetailHistory(Array.isArray(d?.statusHistory) ? (d.statusHistory as { fromStatus: string | null; toStatus: string; createdAt: string; reason?: string | null; actorType?: string }[]) : []);
@@ -420,17 +485,20 @@ export default function OrdersPanel() {
                 };
 
   const cardGrid = (
-    <div className="d-grid gap-2 d-lg-none">
-      {orders.map((o) => (
-        <div className="card" key={o.id}>
-          <div className="card-body py-2">
-            <div className="d-flex justify-content-between align-items-center">
-              <div>
-                <span className="fw-semibold">{o.orderNumber}</span>
-                <div className="small text-muted">{o.customerName} · {toPesos(o.totalMinor)}</div>
+      <div className="d-grid gap-2 d-lg-none">
+        {orders.map((o) => (
+          <div className={`card ${selected.has(o.id) ? "border-primary" : ""}`} key={o.id}>
+            <div className="card-body py-2">
+              <div className="d-flex justify-content-between align-items-center gap-2">
+                <div className="d-flex align-items-center gap-2">
+                  <input className="form-check-input" type="checkbox" checked={selected.has(o.id)} onChange={() => toggleSelect(o.id)} title="Select for batch" />
+                  <div>
+                    <span className="fw-semibold">{o.orderNumber}</span>
+                    <div className="small text-muted">{o.customerName} · {toPesos(o.totalMinor)}</div>
+                  </div>
+                </div>
+                {looking(o)}
               </div>
-              {looking(o)}
-            </div>
             <div className="small text-muted mb-1">{new Date(o.createdAt).toLocaleString()}</div>
             {rowActions(o)}
           </div>
@@ -443,12 +511,18 @@ export default function OrdersPanel() {
     <div className="table-responsive d-none d-lg-block">
       <table className="table table-hover align-middle">
         <thead>
-          <tr><th>Order</th><th>Customer</th><th className="text-end">Total</th><th>Status</th><th>Placed</th><th>Actions</th></tr>
-        </thead>
-        <tbody>
-          {orders.map((o) => (
-            <tr key={o.id}>
-              <td className="fw-semibold">{o.orderNumber}</td>
+                  <tr>
+                    <th style={{ width: 34 }}>
+                      <input className="form-check-input" type="checkbox" title="Select all in view" checked={orders.length > 0 && selected.size === orders.length} onChange={(e) => setSelected(e.target.checked ? new Set(orders.map((x) => x.id)) : new Set())} />
+                    </th>
+                    <th>Order</th><th>Customer</th><th className="text-end">Total</th><th>Status</th><th>Placed</th><th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {orders.map((o) => (
+                    <tr key={o.id} className={selected.has(o.id) ? "table-primary" : ""}>
+                      <td><input className="form-check-input" type="checkbox" checked={selected.has(o.id)} onChange={() => toggleSelect(o.id)} /></td>
+                      <td className="fw-semibold">{o.orderNumber}</td>
               <td>{o.customerName}</td>
               <td className="text-end">{toPesos(o.totalMinor)}</td>
               <td>{looking(o)}</td>
@@ -462,53 +536,116 @@ export default function OrdersPanel() {
   );
 
   return (
-    <div>
-      <h1 className="h4 mb-2"><i className="bi bi-receipt me-2"></i>Orders</h1>
-      {error && <div className="alert alert-danger py-2 small">{error}</div>}
+      <div>
+        <h1 className="h4 mb-2"><i className="bi bi-receipt me-2"></i>Orders</h1>
+        {error && <div className="alert alert-danger py-2 small">{error}</div>}
 
-      {/* Filters */}
-      <div className="d-flex flex-wrap gap-2 align-items-center mb-2">
-        <select className="form-select form-select-sm" style={{ width: 140 }} value={range} onChange={(e) => setRange(e.target.value as typeof range)}>
-          <option value="today">Today</option>
-          <option value="yesterday">Yesterday</option>
-          <option value="tomorrow">Tomorrow</option>
-          <option value="custom">Custom range</option>
-        </select>
-        {range === "custom" && (
+                {/* Pipeline KPI strip — click a stage to jump to its tab */}
+                <div className="d-flex flex-wrap gap-2 mb-2">
+                  {buildPipelineKpis(counts, setTab).map(([label, n, tone, go]) => (
+            <button key={label} type="button" className="btn btn-outline-secondary btn-sm d-flex flex-column align-items-center px-3 py-2" onClick={go}>
+              <span className={`badge ${n > 0 ? tone : "text-bg-secondary"} fs-6`}>{n > 99 ? "99+" : n}</span>
+              <span className="small text-muted">{label}</span>
+            </button>
+          ))}
+        </div>
+
+        {/* Filters */}
+        <div className="d-flex flex-wrap gap-2 align-items-center mb-2">
+          <select className="form-select form-select-sm" style={{ width: 120 }} value={range} onChange={(e) => setRange(e.target.value as typeof range)}>
+            <option value="today">Today</option>
+            <option value="yesterday">Yesterday</option>
+            <option value="tomorrow">Tomorrow</option>
+            <option value="custom">Custom range</option>
+          </select>
+          {range === "custom" && (
+            <>
+              <input className="form-control form-control-sm" style={{ width: 140 }} type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} />
+              <span className="text-muted small">→</span>
+              <input className="form-control form-control-sm" style={{ width: 140 }} type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} />
+            </>
+          )}
+          <input className="form-control form-control-sm" style={{ width: 200 }} placeholder="Search order / customer / phone…" value={customer} onChange={(e) => setCustomer(e.target.value)} />
+          <select className="form-select form-select-sm" style={{ width: 110 }} value={sourceFilter} onChange={(e) => setSourceFilter(e.target.value)} title="Source">
+            <option value="">All sources</option>
+            <option value="online">Online</option>
+            <option value="pos">POS</option>
+            <option value="PRE_ORDER">Pre-order</option>
+          </select>
+          <select className="form-select form-select-sm" style={{ width: 105 }} value={paymentFilter} onChange={(e) => setPaymentFilter(e.target.value)} title="Payment">
+            <option value="">All payment</option>
+            <option value="cod">COD</option>
+            <option value="credit">Utang</option>
+          </select>
+          <select className="form-select form-select-sm" style={{ width: 115 }} value={fulfillmentFilter} onChange={(e) => setFulfillmentFilter(e.target.value)} title="Fulfillment">
+            <option value="">Delivery + pickup</option>
+            <option value="delivery">Delivery only</option>
+            <option value="pickup">Pickup only</option>
+          </select>
+          <div className="form-check form-switch form-check-sm" title="Auto-refresh every 30s">
+            <input className="form-check-input" type="checkbox" id="ordAuto" checked={autoRefresh} onChange={(e) => { setAutoRefresh(e.target.checked); try { localStorage.setItem("orders.autoRefresh", e.target.checked ? "1" : "0"); } catch { /* ignore */ } }} />
+            <label className="form-check-label small" htmlFor="ordAuto">Auto 30s</label>
+          </div>
+        </div>
+
+        {/* Tabs */}
+              <ul className="nav nav-pills mb-2 flex-wrap">
+                {TABS.map((t) => {
+                                const n = t.status ? t.status.reduce((s, st) => s + (counts[st] ?? 0), 0) : Object.values(counts).reduce((s, c) => s + c, 0);
+                                return (
+                    <li className="nav-item" key={t.id}>
+                      <button className={`nav-link ${tab === t.id ? "active bg-primary" : ""}`} onClick={() => setTab(t.id)}>
+                        {t.label}
+                        {n > 0 && <span className={`badge ${tab === t.id ? "text-bg-primary" : "text-bg-secondary"} rounded-pill ms-1`}>{n > 99 ? "99+" : n}</span>}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+
+        {/* Batch bar — appears when rows are selected */}
+        {selected.size > 0 && (
+          <div className="d-flex flex-wrap gap-1 align-items-center bg-primary bg-opacity-10 border rounded px-2 py-1 mb-2 w-100 small">
+            <span className="fw-semibold">{selected.size} selected</span>
+            {canWrite && canBatchReceive && (
+              <button className="btn btn-sm btn-primary" disabled={transitioning === "batch"} onClick={() => runBatch("Received", async (o) => doTransition(o.id, "CONFIRMED"))}>
+                <i className="bi bi-check-lg me-1"></i>Receive
+              </button>
+            )}
+            {canWrite && canBatchCancel && (
+              <button className="btn btn-sm btn-outline-danger" disabled={transitioning === "batch"} onClick={() => setPendingReason({ orderId: "__BATCH__", to: "CANCELLED" })}>
+                <i className="bi bi-x-lg me-1"></i>Cancel
+              </button>
+            )}
+            {canWrite && canBatchSend && (
+              <button className="btn btn-sm btn-primary" disabled={transitioning === "batch"} onClick={() => runBatch("Sent for delivery", async (o) => sendForDelivery(o.id))}>
+                <i className="bi bi-truck me-1"></i>Send for delivery
+              </button>
+            )}
+            {canWrite && canBatchPickup && (
+              <button className="btn btn-sm btn-success" disabled={transitioning === "batch"} onClick={() => runBatch("Completed (pickup)", async (o) => completeNow(o.id))}>
+                <i className="bi bi-bag-check me-1"></i>Complete pickup
+              </button>
+            )}
+            {canWrite && canBatchDelivered && (
+              <button className="btn btn-sm btn-success" disabled={transitioning === "batch"} onClick={() => runBatch("Marked delivered", async (o) => doTransition(o.id, "DELIVERED"))}>
+                <i className="bi bi-check2-circle me-1"></i>Mark delivered
+              </button>
+            )}
+            <button className="btn btn-sm btn-outline-secondary" disabled={transitioning === "batch"} onClick={clearSelection}>Clear</button>
+          </div>
+        )}
+
+        {loading ? (
+          <p className="text-muted">Loading orders…</p>
+        ) : orders.length === 0 ? (
+          <p className="text-muted text-center py-4"><i className="bi bi-inbox fs-3 d-block mb-2"></i>No orders in this view.</p>
+        ) : (
           <>
-            <input className="form-control form-control-sm" style={{ width: 140 }} type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} />
-            <span className="text-muted small">→</span>
-            <input className="form-control form-control-sm" style={{ width: 140 }} type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} />
+            {cardGrid}
+            {tableGrid}
           </>
         )}
-        <input className="form-control form-control-sm" style={{ width: 220 }} placeholder="Search order no. / customer / phone…" value={customer} onChange={(e) => setCustomer(e.target.value)} />
-      </div>
-
-      {/* Tabs */}
-            <ul className="nav nav-pills mb-3 flex-wrap">
-              {TABS.map((t) => {
-                              const n = t.status ? t.status.reduce((s, st) => s + (counts[st] ?? 0), 0) : Object.values(counts).reduce((s, c) => s + c, 0);
-                              return (
-                  <li className="nav-item" key={t.id}>
-                    <button className={`nav-link ${tab === t.id ? "active bg-primary" : ""}`} onClick={() => setTab(t.id)}>
-                      {t.label}
-                      {n > 0 && <span className={`badge ${tab === t.id ? "text-bg-primary" : "text-bg-secondary"} rounded-pill ms-1`}>{n > 99 ? "99+" : n}</span>}
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-
-      {loading ? (
-        <p className="text-muted">Loading orders…</p>
-      ) : orders.length === 0 ? (
-        <p className="text-muted text-center py-4"><i className="bi bi-inbox fs-3 d-block mb-2"></i>No orders in this view.</p>
-      ) : (
-        <>
-          {cardGrid}
-          {tableGrid}
-        </>
-      )}
 
       {/* Reason modal */}
       {pendingReason && (
@@ -525,7 +662,14 @@ export default function OrdersPanel() {
                 </div>
                 <div className="modal-footer">
                   <button type="button" className="btn btn-outline-secondary" onClick={() => setPendingReason(null)}>Cancel</button>
-                  <button className="btn btn-danger" disabled={reason.trim().length < 3} onClick={() => doTransition(pendingReason.orderId, pendingReason.to, reason)}>Confirm</button>
+                  <button className="btn btn-danger" disabled={reason.trim().length < 3} onClick={() => {
+                         if (pendingReason.orderId === "__BATCH__") {
+                           void runBatch("Cancelled", async (o) => doTransition(o.id, "CANCELLED", reason));
+                           setPendingReason(null); setReason("");
+                         } else {
+                           doTransition(pendingReason.orderId, pendingReason.to, reason);
+                         }
+                       }}>Confirm</button>
                 </div>
               </div>
             </div>
@@ -693,8 +837,29 @@ export default function OrdersPanel() {
                                     {orderDetail.paymentMethod && (
                                       <><dt className="col-5">Method</dt><dd className="col-7">{orderDetail.paymentMethod === "credit" ? <><i className="bi bi-journal-text me-1 text-warning"></i>Utang (credit)</> : orderDetail.paymentMethod}</dd></>
                                     )}
-                                    {orderDetail.source && <><dt className="col-5">Source</dt><dd className="col-7">{orderDetail.source}</dd></>}
-                                  </dl>
+                                    {orderDetail.source && <><dt className="col-5">Source</dt><dd className="col-7">{orderDetail.source === "PRE_ORDER" ? "Pre-order" : orderDetail.source === "pos" ? "POS" : "Online"}</dd></>}
+                                                                        {(orderDetail.deliveryType ?? "delivery") === "delivery" ? (
+                                                                          <><dt className="col-5">Fulfillment</dt><dd className="col-7"><i className="bi bi-truck me-1"></i>Delivery</dd></>
+                                                                        ) : (
+                                                                          <><dt className="col-5">Fulfillment</dt><dd className="col-7"><i className="bi bi-shop me-1"></i>Pickup</dd></>
+                                                                        )}
+                                                                        {orderDetail.deliveryAddressLine1 && (
+                                                                          <><dt className="col-5">Address</dt><dd className="col-7">
+                                                                            {orderDetail.deliveryAddressLine1}
+                                                                            {orderDetail.deliveryAddressLine2 ? `, ${orderDetail.deliveryAddressLine2}` : ""}
+                                                                            {orderDetail.landmark ? ` (${orderDetail.landmark})` : ""}
+                                                                          </dd></>
+                                                                        )}
+                                                                        {orderDetail.notes && <><dt className="col-5">Notes</dt><dd className="col-7">{orderDetail.notes}</dd></>}
+                                                                      </dl>
+                                                                        {typeof orderDetail.subtotalMinor === "number" && (
+                                                                          <div className="border rounded p-2 bg-light mb-2 small">
+                                                                            <div className="d-flex justify-content-between"><span>Subtotal</span><span>{toPesos(orderDetail.subtotalMinor)}</span></div>
+                                                                            {orderDetail.deliveryFeeMinor ? <div className="d-flex justify-content-between"><span>Delivery</span><span>{toPesos(orderDetail.deliveryFeeMinor)}</span></div> : null}
+                                                                            {orderDetail.discountMinor ? <div className="d-flex justify-content-between text-danger"><span>Discount</span><span>−{toPesos(orderDetail.discountMinor)}</span></div> : null}
+                                                                            <div className="d-flex justify-content-between fw-semibold border-top mt-1 pt-1"><span>Total</span><span>{toPesos(orderDetail.totalMinor)}</span></div>
+                                                                          </div>
+                                                                        )}
                                                                     {detailItems && (
                                                                       <div className="border rounded p-2 bg-light mb-2">
                                                                         <div className="fw-semibold small mb-1"><i className="bi bi-box-seam me-1"></i>Items</div>

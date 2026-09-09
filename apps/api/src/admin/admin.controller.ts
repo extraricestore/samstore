@@ -382,90 +382,100 @@ export class AdminController {
     return result.value;
   }
 
-  /** GET /admin/orders — list orders (tenant-scoped). Filters (V1): status, from, to, customer. */
-  @Get("orders")
-  async orders(
-    @Req() req: Request & { user?: AuthPrincipal },
-    @Query("status") status?: string,
-    @Query("from") from?: string,
-    @Query("to") to?: string,
-    @Query("customer") customer?: string,
-    @Headers("x-store-id") headerStoreId?: string,
-  ) {
-    const user = req.user;
-        requireView(user);
-        const storeId = await this.resolveStoreId(user, headerStoreId);
-        // Date hardening: non-parseable dates → 422 (never 500).
-        for (const [key, val] of [["from", from], ["to", to]] as const) {
-          if (val !== undefined && Number.isNaN(Date.parse(val))) {
-            throw new HttpException({ type: "validation", errors: [`${key} must be an ISO date`] }, HttpStatus.UNPROCESSABLE_ENTITY);
+  /** GET /admin/orders — list orders (tenant-scoped). Filters (V1): status, from, to, customer, source, payment, fulfillment. */
+    @Get("orders")
+    async orders(
+      @Req() req: Request & { user?: AuthPrincipal },
+      @Query("status") status?: string,
+      @Query("from") from?: string,
+      @Query("to") to?: string,
+      @Query("customer") customer?: string,
+      @Query("source") source?: string,
+      @Query("payment") payment?: string,
+      @Query("fulfillment") fulfillment?: string,
+      @Headers("x-store-id") headerStoreId?: string,
+    ) {
+      const user = req.user;
+          requireView(user);
+          const storeId = await this.resolveStoreId(user, headerStoreId);
+          // Date hardening: non-parseable dates → 422 (never 500).
+          for (const [key, val] of [["from", from], ["to", to]] as const) {
+            if (val !== undefined && Number.isNaN(Date.parse(val))) {
+              throw new HttpException({ type: "validation", errors: [`${key} must be an ISO date`] }, HttpStatus.UNPROCESSABLE_ENTITY);
+            }
           }
-        }
-        const cacheKeyStr = cacheKey("orders", storeId, status ?? "", from ?? "", to ?? "", customer ?? "");
-        const hit = cacheGet<unknown[]>(cacheKeyStr);
-        if (hit) return { orders: hit, storeId };
-        const where: Record<string, unknown> = { storeId };
-    if (status) where.status = { in: status.split(",") };
-    if (from || to) {
-      where.createdAt = {};
-      if (from) (where.createdAt as Record<string, unknown>).gte = new Date(from);
-      if (to) (where.createdAt as Record<string, unknown>).lte = new Date(to);
-    }
-    if (customer) {
-          where.OR = [
-            { customerName: { contains: customer, mode: "insensitive" } },
-            { customerPhone: { contains: customer, mode: "insensitive" } },
-            { orderNumber: { contains: customer, mode: "insensitive" } },
-          ];
-        }
-    const list = await prisma.order.findMany({
-          where,
-          orderBy: { createdAt: "desc" },
-          take: 200,
-          select: {
-            id: true, orderNumber: true, status: true, totalMinor: true, currencyCode: true,
-            customerName: true, customerPhone: true, createdAt: true, paymentStatus: true, source: true,
-            deliveryType: true, paymentMethod: true, signatureData: true, signatureAt: true,
-          },
-        });
-        cacheSet(cacheKeyStr, list, 5_000);
-                return { orders: list, storeId };
+          const cacheKeyStr = cacheKey("orders", storeId, status ?? "", from ?? "", to ?? "", customer ?? "", source ?? "", payment ?? "", fulfillment ?? "");
+          const hit = cacheGet<unknown[]>(cacheKeyStr);
+          if (hit) return { orders: hit, storeId };
+          const where: Record<string, unknown> = { storeId };
+      if (status) where.status = { in: status.split(",") };
+      if (from || to) {
+        where.createdAt = {};
+        if (from) (where.createdAt as Record<string, unknown>).gte = new Date(from);
+        if (to) (where.createdAt as Record<string, unknown>).lte = new Date(to);
+      }
+      if (customer) {
+            where.OR = [
+              { customerName: { contains: customer, mode: "insensitive" } },
+              { customerPhone: { contains: customer, mode: "insensitive" } },
+              { orderNumber: { contains: customer, mode: "insensitive" } },
+            ];
           }
+          // Source / payment / fulfillment facets (V2 pipeline filters).
+          if (source) where.source = source; // online | pos | PRE_ORDER
+          if (payment) where.paymentMethod = payment; // cod | credit
+          if (fulfillment) where.deliveryType = fulfillment; // delivery | pickup
+      const list = await prisma.order.findMany({
+            where,
+            orderBy: { createdAt: "desc" },
+            take: 200,
+            select: {
+              id: true, orderNumber: true, status: true, totalMinor: true, currencyCode: true,
+              customerName: true, customerPhone: true, createdAt: true, paymentStatus: true, source: true,
+              deliveryType: true, paymentMethod: true, signatureData: true, signatureAt: true,
+            },
+          });
+          cacheSet(cacheKeyStr, list, 5_000);
+                  return { orders: list, storeId };
+            }
 
           /** GET /admin/orders/counts — per-status order counts (for tab badges). Cached 5s.
                         Accepts the SAME range/customer filters as the list so badges match the visible rows. */
                     @Get("orders/counts")
-                    async orderCounts(@Req() req: Request & { user?: AuthPrincipal }, @Query("from") from?: string, @Query("to") to?: string, @Query("customer") customer?: string, @Headers("x-store-id") headerStoreId?: string) {
-                      const user = req.user;
-                      requireView(user);
-                      const storeId = await this.resolveStoreId(user, headerStoreId);
-                      for (const [key, val] of [["from", from], ["to", to]] as const) {
-                        if (val !== undefined && Number.isNaN(Date.parse(val))) {
-                          throw new HttpException({ type: "validation", errors: [`${key} must be an ISO date`] }, HttpStatus.UNPROCESSABLE_ENTITY);
-                        }
-                      }
-                      const key = cacheKey("orders-counts", storeId, from ?? "", to ?? "", customer ?? "");
-                      const hit = cacheGet<unknown>(key);
-                      if (hit) return { counts: hit, storeId };
-                      const where: Record<string, unknown> = { storeId };
-                      if (from || to) {
-                        where.createdAt = {};
-                        if (from) (where.createdAt as Record<string, unknown>).gte = new Date(from);
-                        if (to) (where.createdAt as Record<string, unknown>).lte = new Date(to);
-                      }
-                      if (customer) {
-                        where.OR = [
-                          { customerName: { contains: customer, mode: "insensitive" } },
-                          { customerPhone: { contains: customer, mode: "insensitive" } },
-                          { orderNumber: { contains: customer, mode: "insensitive" } },
-                        ];
-                      }
-                      const groups = await prisma.order.groupBy({ by: ["status"], where, _count: { _all: true } });
-                      const counts: Record<string, number> = {};
-                      for (const g of groups) counts[g.status] = g._count._all;
-                      cacheSet(key, counts, 5_000);
-                      return { counts, storeId };
-                    }
+                    async orderCounts(@Req() req: Request & { user?: AuthPrincipal }, @Query("from") from?: string, @Query("to") to?: string, @Query("customer") customer?: string, @Query("source") source?: string, @Query("payment") payment?: string, @Query("fulfillment") fulfillment?: string, @Headers("x-store-id") headerStoreId?: string) {
+                                          const user = req.user;
+                                          requireView(user);
+                                          const storeId = await this.resolveStoreId(user, headerStoreId);
+                                          for (const [key, val] of [["from", from], ["to", to]] as const) {
+                                            if (val !== undefined && Number.isNaN(Date.parse(val))) {
+                                              throw new HttpException({ type: "validation", errors: [`${key} must be an ISO date`] }, HttpStatus.UNPROCESSABLE_ENTITY);
+                                            }
+                                          }
+                                          const key = cacheKey("orders-counts", storeId, from ?? "", to ?? "", customer ?? "", source ?? "", payment ?? "", fulfillment ?? "");
+                                          const hit = cacheGet<unknown>(key);
+                                          if (hit) return { counts: hit, storeId };
+                                          const where: Record<string, unknown> = { storeId };
+                                          if (from || to) {
+                                            where.createdAt = {};
+                                            if (from) (where.createdAt as Record<string, unknown>).gte = new Date(from);
+                                            if (to) (where.createdAt as Record<string, unknown>).lte = new Date(to);
+                                          }
+                                          if (customer) {
+                                            where.OR = [
+                                              { customerName: { contains: customer, mode: "insensitive" } },
+                                              { customerPhone: { contains: customer, mode: "insensitive" } },
+                                              { orderNumber: { contains: customer, mode: "insensitive" } },
+                                            ];
+                                          }
+                                          if (source) where.source = source;
+                                          if (payment) where.paymentMethod = payment;
+                                          if (fulfillment) where.deliveryType = fulfillment;
+                                          const groups = await prisma.order.groupBy({ by: ["status"], where, _count: { _all: true } });
+                                          const counts: Record<string, number> = {};
+                                          for (const g of groups) counts[g.status] = g._count._all;
+                                          cacheSet(key, counts, 5_000);
+                                          return { counts, storeId };
+                                        }
 
           /** GET /admin/orders/:id — full detail (items + history). */
   @Get("orders/:id")
