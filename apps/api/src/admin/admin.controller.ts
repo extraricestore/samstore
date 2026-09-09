@@ -30,7 +30,7 @@ import { TeamService } from "./team.service.js";
 import { WarehouseService } from "./warehouse.service.js";
 import { LoyaltyService } from "../loyalty/loyalty.service.js";
 import { NOTIFICATIONS_SERVICE, type NotificationsService } from "../notifications/notifications.service.js";
-import type { OrderState } from "../domain/order-state.js";
+import { type OrderState, ORDER_STATES } from "../domain/order-state.js";
 
 const ADMIN_ROLES = ["STORE_OWNER", "PLATFORM_ADMIN", "MANAGER", "STAFF"];
 /** Roles that can also view orders (sales agents work the order/inbox surface). */
@@ -405,10 +405,15 @@ export class AdminController {
             }
           }
           const cacheKeyStr = cacheKey("orders", storeId, status ?? "", from ?? "", to ?? "", customer ?? "", source ?? "", payment ?? "", fulfillment ?? "");
-          const hit = cacheGet<unknown[]>(cacheKeyStr);
-          if (hit) return { orders: hit, storeId };
-          const where: Record<string, unknown> = { storeId };
-      if (status) where.status = { in: status.split(",") };
+                  const hit = cacheGet<unknown[]>(cacheKeyStr);
+                  if (hit) return { orders: hit, storeId };
+                  const where: Record<string, unknown> = { storeId };
+              if (status) {
+                // Validate against the OrderStatus enum — invalid values → empty result, never a 500.
+                const statuses = status.split(",").filter((s) => ORDER_STATES.includes(s as OrderState));
+                if (statuses.length === 0) return { orders: [], storeId };
+                where.status = { in: statuses };
+              }
       if (from || to) {
         where.createdAt = {};
         if (from) (where.createdAt as Record<string, unknown>).gte = new Date(from);
@@ -442,7 +447,7 @@ export class AdminController {
           /** GET /admin/orders/counts — per-status order counts (for tab badges). Cached 5s.
                         Accepts the SAME range/customer filters as the list so badges match the visible rows. */
                     @Get("orders/counts")
-                    async orderCounts(@Req() req: Request & { user?: AuthPrincipal }, @Query("from") from?: string, @Query("to") to?: string, @Query("customer") customer?: string, @Query("source") source?: string, @Query("payment") payment?: string, @Query("fulfillment") fulfillment?: string, @Headers("x-store-id") headerStoreId?: string) {
+                    async orderCounts(@Req() req: Request & { user?: AuthPrincipal }, @Query("status") status?: string, @Query("from") from?: string, @Query("to") to?: string, @Query("customer") customer?: string, @Query("source") source?: string, @Query("payment") payment?: string, @Query("fulfillment") fulfillment?: string, @Headers("x-store-id") headerStoreId?: string) {
                                           const user = req.user;
                                           requireView(user);
                                           const storeId = await this.resolveStoreId(user, headerStoreId);
@@ -451,7 +456,7 @@ export class AdminController {
                                               throw new HttpException({ type: "validation", errors: [`${key} must be an ISO date`] }, HttpStatus.UNPROCESSABLE_ENTITY);
                                             }
                                           }
-                                          const key = cacheKey("orders-counts", storeId, from ?? "", to ?? "", customer ?? "", source ?? "", payment ?? "", fulfillment ?? "");
+                                          const key = cacheKey("orders-counts", storeId, status ?? "", from ?? "", to ?? "", customer ?? "", source ?? "", payment ?? "", fulfillment ?? "");
                                           const hit = cacheGet<unknown>(key);
                                           if (hit) return { counts: hit, storeId };
                                           const where: Record<string, unknown> = { storeId };
@@ -468,9 +473,14 @@ export class AdminController {
                                             ];
                                           }
                                           if (source) where.source = source;
-                                          if (payment) where.paymentMethod = payment;
-                                          if (fulfillment) where.deliveryType = fulfillment;
-                                          const groups = await prisma.order.groupBy({ by: ["status"], where, _count: { _all: true } });
+                                                                if (payment) where.paymentMethod = payment;
+                                                                if (fulfillment) where.deliveryType = fulfillment;
+                                                                if (status) {
+                                                                  const statuses = status.split(",").filter((s) => ORDER_STATES.includes(s as OrderState));
+                                                                  if (statuses.length === 0) return { counts: {}, storeId };
+                                                                  where.status = { in: statuses };
+                                                                }
+                                                                const groups = await prisma.order.groupBy({ by: ["status"], where, _count: { _all: true } });
                                           const counts: Record<string, number> = {};
                                           for (const g of groups) counts[g.status] = g._count._all;
                                           cacheSet(key, counts, 5_000);
