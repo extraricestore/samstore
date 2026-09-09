@@ -16,7 +16,7 @@ interface PosProduct {
   id: string; name: string; sku: string; priceMinor: number;
   availableQuantity: number; category: { name: string } | null;
 }
-interface PosCustomer { id: string; name: string | null; email: string | null; phone: string | null; loyaltyPoints?: number; }
+interface PosCustomer { id: string; name: string | null; email: string | null; phone: string | null; address?: string | null; loyaltyPoints?: number; }
 interface CartLine { product: PosProduct; quantity: number; }
 interface HeldOrder { id: string; orderNumber: string; totalMinor: number; customerName: string; storeCustomerId: string | null; createdAt: string; items: { productId: string; productName: string; quantity: number; unitPriceMinor: number }[]; }
 interface LastSale { orderId: string; orderNumber: string; totalMinor: number; changeMinor: number; paymentMethod: string }
@@ -131,6 +131,7 @@ export default function PosPanel({ onNavigate }: { onNavigate?: (tab: string) =>
   const [step, setStep] = useState<"products" | "review" | "payment" | "done">("products");
   // For delivery: convert the completed sale into a delivery-pipeline order.
   const [deliverTarget, setDeliverTarget] = useState<LastSale | null>(null);
+  const [delivCustomerId, setDelivCustomerId] = useState("");
   const [delivAddress, setDelivAddress] = useState("");
   const [delivLandmark, setDelivLandmark] = useState("");
   const [delivBusy, setDelivBusy] = useState(false);
@@ -312,6 +313,9 @@ export default function PosPanel({ onNavigate }: { onNavigate?: (tab: string) =>
     setDelivDone(false);
   };
 
+  /** Customer picked in the for-delivery modal (for details display). */
+  const delivCustomer = () => customers.find((c) => c.id === delivCustomerId) ?? null;
+
   /** Mark the completed sale for delivery (address required; courier portal shows it). */
   const saveDelivery = async () => {
     if (!deliverTarget) return;
@@ -363,6 +367,30 @@ export default function PosPanel({ onNavigate }: { onNavigate?: (tab: string) =>
                   <p className="small text-muted mb-2">
                     Payment: <strong>{deliverTarget.paymentMethod === "cash" ? "Paid (cash)" : "Utang (credit)"}</strong> — order joins For Delivery.
                   </p>
+
+                  {/* Customer selector */}
+                  <label className="form-label small">Customer <span className="text-muted">(optional — prefill address)</span></label>
+                  <select className="form-select mb-2" value={delivCustomerId} onChange={(e) => {
+                    const id = e.target.value;
+                    setDelivCustomerId(id);
+                    const c = customers.find((x) => x.id === id);
+                    if (c && c.address) setDelivAddress(c.address);
+                  }}>
+                    <option value="">— Select customer —</option>
+                    {customers.map((c) => <option key={c.id} value={c.id}>{c.name ?? c.phone ?? "Customer"}{c.address ? " · 🏠 address on file" : ""}</option>)}
+                  </select>
+
+                  {/* Customer details (shown once selected) */}
+                  {delivCustomer() && (
+                    <div className="border rounded p-2 bg-light small mb-2">
+                      <div className="fw-semibold">{delivCustomer()!.name ?? "Customer"}</div>
+                      {delivCustomer()!.phone && <div><i className="bi bi-telephone me-1"></i>{delivCustomer()!.phone}</div>}
+                      {delivCustomer()!.email && <div><i className="bi bi-envelope me-1"></i>{delivCustomer()!.email}</div>}
+                      {delivCustomer()!.address && <div className="text-muted"><i className="bi bi-geo-alt me-1"></i>Address on file: <em>{delivCustomer()!.address}</em></div>}
+                      {!delivCustomer()!.address && <div className="text-warning small">No address on file — add it below.</div>}
+                    </div>
+                  )}
+
                   <label className="form-label small">Delivery address <span className="text-danger">*</span></label>
                   <textarea className="form-control mb-2" rows={2} placeholder="Street, barangay, city…" value={delivAddress} onChange={(e) => setDelivAddress(e.target.value)} />
                   <label className="form-label small">Landmark (optional)</label>
@@ -408,7 +436,7 @@ export default function PosPanel({ onNavigate }: { onNavigate?: (tab: string) =>
                   <button className="btn btn-outline-secondary" onClick={() => setReceiptOrder(lastSale.orderId)}>
                     <i className="bi bi-printer me-1"></i>Print receipt
                   </button>
-                  <button className="btn btn-outline-primary" disabled={delivDone} onClick={() => { setDeliverTarget(lastSale); setDelivAddress(""); setDelivLandmark(""); setError(null); }}>
+                  <button className="btn btn-outline-primary" disabled={delivDone} onClick={() => { setDeliverTarget(lastSale); setDelivCustomerId(""); setDelivAddress(""); setDelivLandmark(""); setError(null); }}>
                     <i className="bi bi-truck me-1"></i>{delivDone ? "Marked for delivery ✓" : "For delivery"}
                   </button>
                 </div>
