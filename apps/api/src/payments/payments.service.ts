@@ -82,7 +82,6 @@ export class PaymentsService {
       include: { items: { select: { productId: true, quantity: true } } },
     });
     if (!order) return { ok: false, error: { type: "not_found", message: "Order not found" } };
-    if (!["pos", "PRE_ORDER"].includes(order.source)) return { ok: false, error: { type: "conflict", message: "Only POS and pre-orders can be voided" } };
     if (order.paymentStatus === "COLLECTED") return { ok: false, error: { type: "conflict", message: "Collected sales must be refunded, not voided" } };
 
     await prisma.$transaction(async (tx) => {

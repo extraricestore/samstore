@@ -94,8 +94,8 @@ export class OrderAdminService {
 
   // ─────────────────────────────── W1: edit + routing ───────────────────────────────
 
-  /** Editable statuses: RECEIVED | CONFIRMED | ON_HOLD (POS held). */
-  private static EDITABLE = ["RECEIVED", "CONFIRMED", "ON_HOLD"];
+  /** Editable statuses: RECEIVED | CONFIRMED | ON_HOLD | PREPARING | READY (on-process). */
+  private static EDITABLE = ["RECEIVED", "CONFIRMED", "ON_HOLD", "PREPARING", "READY"];
 
   /** W1: replace an order's items with stock-delta (restore removed, deduct added). */
   async replaceOrderItems(storeId: string, orderId: string, items: { productId: string; quantity: number }[]): Promise<AdminResult<{ id: string; status: string; totalMinor: number }>> {

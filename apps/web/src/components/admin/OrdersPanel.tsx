@@ -291,7 +291,7 @@ export default function OrdersPanel() {
   const rowActions = (o: AdminOrder) => {
       const next = ALLOWED[o.status] ?? [];
       const isDeliv = (o.deliveryType ?? "delivery") === "delivery"; // legacy/online = delivery
-      const editable = ["RECEIVED", "CONFIRMED", "ON_HOLD"].includes(o.status);
+      const editable = ["RECEIVED", "CONFIRMED", "ON_HOLD", "PREPARING", "READY"].includes(o.status);
       return (
               <div className="d-flex flex-wrap gap-1 align-items-center">
                 {/* Pending routing analysis — the pill already shows delivery/pickup hint; no separate chip. */}
@@ -322,12 +322,17 @@ export default function OrdersPanel() {
                           </>
                         )}
               {/* On Process: one-tap delivery routing */}
-              {isDeliv && ["CONFIRMED", "PREPARING", "READY"].includes(o.status) && (
-                <button className="btn btn-sm btn-primary" disabled={transitioning === o.id} onClick={() => sendForDelivery(o.id)}><i className="bi bi-truck me-1"></i>Send for delivery</button>
-              )}
-              {isDeliv && o.status === "CONFIRMED" && editable && (
-                <button className="btn btn-sm btn-outline-warning" onClick={() => openEdit(o)}><i className="bi bi-pencil me-1"></i>Edit</button>
-              )}
+                            {isDeliv && ["CONFIRMED", "PREPARING", "READY"].includes(o.status) && (
+                              <button className="btn btn-sm btn-primary" disabled={transitioning === o.id} onClick={() => sendForDelivery(o.id)}><i className="bi bi-truck me-1"></i>Send for delivery</button>
+                            )}
+                            {/* On Process: every live status can be edited, paid (→ COMPLETED), or voided (role-gated). */}
+                            {["CONFIRMED", "PREPARING", "READY"].includes(o.status) && (
+                              <>
+                                <button className="btn btn-sm btn-outline-warning" onClick={() => openEdit(o)} disabled={transitioning === o.id}><i className="bi bi-pencil me-1"></i>Edit</button>
+                                <button className="btn btn-sm btn-success" disabled={transitioning === o.id} onClick={() => { setPayHold({ id: o.id, orderNumber: o.orderNumber, totalMinor: o.totalMinor }); setPayMethod("cash"); setTendered(""); }}><i className="bi bi-cash me-1"></i>Pay</button>
+                                {canVoidRefund && <button className="btn btn-sm btn-outline-danger" disabled={transitioning === o.id} onClick={() => setConfirmAction({ orderId: o.id, kind: "void" })}><i className="bi bi-x-circle me-1"></i>Void</button>}
+                              </>
+                            )}
               {/* Status dropdown — shown only where dedicated buttons don't cover all transitions (i.e. NOT on RECEIVED/CONFIRMED which have Receive/Cancel & routing buttons). */}
                             {next.length > 0 && !["RECEIVED", "CONFIRMED"].includes(o.status) && (
                                                           <select className="form-select form-select-sm" style={{ width: 150 }} value="" disabled={transitioning === o.id} onChange={(e) => e.target.value && transition(o.id, e.target.value)}>

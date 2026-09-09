@@ -435,7 +435,8 @@ export class PosService {
   }
 
   async completeHold(storeId: string, actorId: string, holdId: string, input: PosHoldCompleteRequest): Promise<PosResult<PosSellResponse>> {
-    const hold = await prisma.order.findFirst({ where: { storeId, id: holdId, status: "ON_HOLD" } });
+    // Payment can be taken on any on-process order (hold, confirmed, preparing, ready) — paid orders skip to COMPLETED.
+    const hold = await prisma.order.findFirst({ where: { storeId, id: holdId, status: { in: ["ON_HOLD", "CONFIRMED", "PREPARING", "READY"] } } });
     if (!hold) return { ok: false, error: { type: "not_found", message: "Held order not found" } };
     if (!["cash", "credit"].includes(input.paymentMethod)) {
       return { ok: false, error: { type: "validation", errors: ["paymentMethod must be cash or credit"] } };
