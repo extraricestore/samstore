@@ -1,6 +1,19 @@
 # SAM STORE — Progress Log
 
-Updated: 2026-09-11 · Project hardening Module 1 ✅ + Module 2 (public access/edge) · Active model: `deepseek/deepseek-v4-flash-0731` (openrouter)
+Updated: 2026-09-11 · Project hardening Modules 1–3 ✅ · Active model: `deepseek/deepseek-v4-flash-0731` (openrouter)
+
+## Project hardening — Module 3: database integrity foundation
+
+| Item | Status |
+|---|---|
+| **Tenant-consistent composite FKs** — `@@unique([storeId,id])` on Order/Product/Purchase/StoreCustomer/Voucher/StockLevel + composite `(storeId, parentId)` FKs on OrderItem, OrderStatusHistory, OrderClaimToken, ProductImage, StockLevel, CartItem, PurchaseItem, LoyaltyEntry→StoreCustomer, CreditEntry→StoreCustomer, VoucherRedemption→Voucher | ✅ migration `20260911033617_module3_integrity_foundation` |
+| **Pre-migration reconciliation** — 12 cross-tenant mismatch checks all `0` before tightening; backfill verified after (105 orders, 0 violations) | ✅ |
+| **Explicit fulfillment** — new `Order.fulfillmentType` enum (PICKUP/DELIVERY), backfilled from the address signal; written at checkout (by deliveryType), POS creation (PICKUP), delivery conversion (DELIVERY) | ✅ |
+| **`StockMovement`** model (append-only stock movement ledger: RESERVE/RELEASE/CONSUME/ADJUST/RECEIPT/TRANSFER, balanceAfter, order ref) — schema support for Module 4 | ✅ |
+| **`OutboxEvent`** model (transactional outbox: PENDING/PROCESSED/FAILED, attempts, nextAttemptAt, payload) — schema support for Module 9 | ✅ |
+| Composite-FK test proves a cross-tenant child insert now fails (P2003) | ✅ |
+
+Known remaining gap (documented): nullable-parent refs (Payment.orderId, VoucherRedemption.orderId, LoyaltyEntry.orderId, CreditEntry.orderId, OrderItem.productId) keep single-column FKs — raw composite constraints would trigger Prisma drift-detection on future `migrate dev`, so they were intentionally not added; covered by app-level tenant scoping until a drift-free approach exists.
 
 ## Project hardening — Module 2: public access & API edge security
 

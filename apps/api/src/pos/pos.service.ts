@@ -165,6 +165,7 @@ export class PosService {
         paymentMethod: data.paymentMethod, paymentStatus: data.paymentStatus,
         idempotencyKey: `pos_${data.id}`, cartToken: "", customerName: data.customerName, customerPhone: "",
         deliveryAddressLine1: "", storeCustomerId: data.storeCustomerId,
+        fulfillmentType: "PICKUP", // M3: POS orders are counter/pickup at creation (delivery conversion flips it)
         signatureData: data.signatureData ?? null, signatureAt,
       },
     });
@@ -316,6 +317,7 @@ export class PosService {
         data: {
           status: "OUT_FOR_DELIVERY",
           deliveryType: "delivery",
+          fulfillmentType: "DELIVERY", // M3: POS sale converted to delivery
           deliveryAddressLine1: address,
           ...(input.landmark?.trim() ? { landmark: input.landmark.trim() } : {}),
         },
@@ -548,6 +550,7 @@ export class PosService {
         where: { id: holdId },
         data: {
           status: finalStatus,
+          fulfillmentType: finalStatus === "OUT_FOR_DELIVERY" ? "DELIVERY" : "PICKUP", // M3: explicit
           paymentMethod: input.paymentMethod,
           paymentStatus: input.paymentMethod === "cash" ? "COLLECTED" : "PENDING",
           customerName: displayName,

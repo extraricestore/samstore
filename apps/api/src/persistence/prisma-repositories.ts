@@ -294,6 +294,7 @@ export class PrismaOrderRepository implements OrderRepository {
           status: order.status as OrderStatus,
           currencyCode: order.currencyCode,
           deliveryType: order.deliveryType ?? "delivery",
+          fulfillmentType: order.deliveryType === "pickup" ? "PICKUP" : "DELIVERY", // M3: explicit
           subtotalMinor: order.subtotalMinor,
           deliveryFeeMinor: order.deliveryFeeMinor,
           discountMinor: order.discountMinor,
