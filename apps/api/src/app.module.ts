@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { CHECKOUT_SERVICE, CheckoutService } from "./checkout/checkout.service.js";
 import { CheckoutController } from "./checkout/checkout.controller.js";
 import { PublicStoreController } from "./public/public-store.controller.js";
+import { PublicStoreService } from "./public/public-store.service.js";
 import { CartController } from "./cart/cart.controller.js";
 import { CartService, CART_SERVICE } from "./cart/cart.service.js";
 import { AuthController } from "./auth/auth.controller.js";
@@ -117,6 +118,7 @@ const CLAIM_SECRET = process.env.CLAIM_SIGNING_SECRET ?? "dev-only-in-memory-sec
       useValue: { jwtSecret: process.env.JWT_SECRET ?? "dev-jwt-secret-change-me-0123456789" },
     },
     JwtAuthGuard,
+    PublicStoreService,
     {
       provide: CART_SERVICE,
       useFactory: () => new CartService(new PrismaCartRepository(), new PrismaCatalogRepository()),

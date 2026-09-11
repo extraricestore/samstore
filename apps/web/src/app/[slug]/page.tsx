@@ -2,9 +2,13 @@ import Storefront from "../../components/Storefront";
 import { API_URL } from "../../config";
 import type { PublicStoreDTO, ProductDTO } from "../../types";
 
-export default async function StorePage({ params }: { params: Promise<{ slug: string }> }) {
+export default async function StorePage({ params, searchParams }: { params: Promise<{ slug: string }>; searchParams?: Promise<{ token?: string }> }) {
   const { slug } = await params;
-  const res = await fetch(`${API_URL}/public/stores/${slug}`, { cache: "no-store" });
+  const sp = searchParams ? await searchParams : null;
+  const token = sp?.token ?? "";
+  // The public link is slug + high-entropy token. Missing token → 404 (identical
+  // to an unknown store, so nothing leaks).
+  const res = await fetch(`${API_URL}/public/stores/${slug}?token=${encodeURIComponent(token)}`, { cache: "no-store" });
   if (!res.ok) {
     return (
       <div className="container py-5 text-center">

@@ -1,6 +1,18 @@
 # SAM STORE — Progress Log
 
-Updated: 2026-09-11 · Project hardening Module 1 (tenant authorization) ✅ · Active model: `deepseek/deepseek-v4-flash-0731` (openrouter)
+Updated: 2026-09-11 · Project hardening Module 1 ✅ + Module 2 (public access/edge) · Active model: `deepseek/deepseek-v4-flash-0731` (openrouter)
+
+## Project hardening — Module 2: public access & API edge security
+
+| Item | Status |
+|---|---|
+| **Public store link now requires slug + high-entropy token** (new `public/public-store.service.ts`); missing/wrong/revoked token → 404 (no slug/token enumeration) | ✅ |
+| Storefront passes `?token=` (`[slug]/page.tsx`); Store Link panel builds tokenized links/QR, adds **Regenerate link** + **Revoke link** (owner/manager), revoked banner | ✅ |
+| New `POST /admin/store-link/rotate` + `/revoke` (MANAGE) → `rotateStoreLinkToken`/`revokeStoreLink` (token rotation marks `rotatedAt` + reactivates; revoke marks `REVOKED`+`revokedAt`) | ✅ |
+| **Claim-token consumption is atomic** — conditional `updateMany WHERE usedAt IS NULL`; concurrent claims → exactly one success, one conflict (concurrency test) | ✅ |
+| Edge middleware in `main.ts`: prod config validation (fail boot w/o strong `JWT_SECRET`/`CLAIM_SIGNING_SECRET`/`DATABASE_URL`), `5mb` body cap, security headers, `enableShutdownHooks`, **rate limiting** on public/auth surface (`security/rate-limit.ts`, in-process, no new deps) | ✅ |
+
+Tests: `public-store.service.test.ts` (5) + `order-lookup.service.test.ts` (3, incl. concurrent single-use).
 
 ## Project hardening — Module 1: tenant authorization & registration closure (✅, 210 tests)
 

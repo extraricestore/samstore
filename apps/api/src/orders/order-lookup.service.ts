@@ -34,15 +34,19 @@ export class OrderLookupService {
     if (!record) {
       return { ok: false, error: { type: "unauthorized", message: "Invalid claim link" } };
     }
-    if (record.usedAt) {
-      return { ok: false, error: { type: "conflict", message: "This order link has already been used" } };
-    }
     if (record.expiresAt < new Date()) {
       return { ok: false, error: { type: "conflict", message: "This order link has expired" } };
     }
 
-    // Consume the token (single-use).
-    await prisma.orderClaimToken.update({ where: { id: record.id }, data: { usedAt: new Date() } });
+    // Consume the token ATOMICALLY (single-use): only one concurrent request can
+    // flip usedAt from null. The loser gets a conflict — no race, no double-view.
+    const consumed = await prisma.orderClaimToken.updateMany({
+      where: { token: claimToken, usedAt: null },
+      data: { usedAt: new Date() },
+    });
+    if (consumed.count === 0) {
+      return { ok: false, error: { type: "conflict", message: "This order link has already been used" } };
+    }
 
     const order = record.order;
     return {

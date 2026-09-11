@@ -1,74 +1,23 @@
-import { Controller, Get, Param, HttpException, HttpStatus } from "@nestjs/common";
-import type { PublicStoreDTO, ProductDTO, CategoryDTO } from "@sam-store/contracts";
-import { PrismaStoreRepository, PrismaCatalogRepository } from "../persistence/prisma-repositories.js";
+import { Controller, Get, Param, Query, HttpException, HttpStatus, Inject } from "@nestjs/common";
+import { PublicStoreService } from "./public-store.service.js";
 
-// Public-facing storefront endpoints (no auth — the public link is the access control).
+// Public-facing storefront endpoints (no auth — the PUBLIC LINK is the access
+// control: slug + high-entropy token, both required, ACTIVE link only).
 
 @Controller("public")
 export class PublicStoreController {
-  private readonly stores = new PrismaStoreRepository();
-  private readonly catalog = new PrismaCatalogRepository();
+  constructor(@Inject(PublicStoreService) private readonly stores: PublicStoreService) {}
 
-  /** GET /public/stores/:slug — public store profile + active products */
+  /** GET /public/stores/:slug?token= — public store profile + active products. */
   @Get("stores/:slug")
-  async getStore(@Param("slug") slug: string) {
-    const store = await this.stores.findBySlug(slug);
-    if (!store) {
+  async getStore(@Param("slug") slug: string, @Query("token") token?: string) {
+    const result = await this.stores.getStore(slug, token);
+    if (!result) {
       throw new HttpException({ type: "not_found", message: "Store not found" }, HttpStatus.NOT_FOUND);
     }
-    if (!store.guestOrderingEnabled || store.orderingPaused) {
-      return {
-        id: store.id,
-        slug: store.slug,
-        name: store.name,
-        description: store.description,
-        currencyCode: store.currencyCode,
-        timezone: store.timezone,
-        status: store.status,
-        guestOrderingEnabled: store.guestOrderingEnabled,
-        orderingPaused: store.orderingPaused,
-        closedStoreMessage: store.closedStoreMessage,
-        deliveryFeeMinor: store.deliveryFeeMinor,
-        deliveryEnabled: store.deliveryEnabled,
-        pickupEnabled: store.pickupEnabled,
-        minOrderAmountMinor: store.minOrderAmountMinor,
-      };
+    if (result.closed) {
+      return result.store;
     }
-    const products = await this.catalog.listActiveProducts(store.id);
-    return {
-      store: {
-        id: store.id,
-        slug: store.slug,
-        name: store.name,
-        description: store.description,
-        currencyCode: store.currencyCode,
-        timezone: store.timezone,
-        status: store.status,
-        guestOrderingEnabled: store.guestOrderingEnabled,
-        orderingPaused: store.orderingPaused,
-        // v6 A2: restricted stores surface a suspended banner; fall back to a generic message.
-        closedStoreMessage:
-          store.status !== "ACTIVE"
-            ? (store.closedStoreMessage ?? "This store is temporarily closed")
-            : store.closedStoreMessage,
-        deliveryFeeMinor: store.deliveryFeeMinor,
-        deliveryEnabled: store.deliveryEnabled,
-        pickupEnabled: store.pickupEnabled,
-        minOrderAmountMinor: store.minOrderAmountMinor,
-        accentColor: store.accentColor,
-        bannerText: store.bannerText,
-        logoUrl: store.logoUrl,
-      },
-      products: products.map((p) => ({
-        id: p.id,
-        sku: p.sku,
-        name: p.name,
-        description: p.description,
-        priceMinor: p.priceMinor,
-        category: p.categoryName ? { id: "", name: p.categoryName, slug: "", sortOrder: 0 } : null,
-        images: p.images.map((url, i) => ({ url, sortOrder: i })),
-        availableQuantity: p.quantityOnHand - p.quantityReserved,
-      })),
-    };
+    return { store: result.store, products: result.products };
   }
 }

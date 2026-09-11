@@ -24,6 +24,7 @@ import { AUTH_SERVICE, AuthService } from "../auth/auth.service.js";
 import { ProductAdminService } from "./product-admin.service.js";
 import { OrderAdminService } from "./order-admin.service.js";
 import { StoreSettingsService } from "./store-settings.service.js";
+import { rotateStoreLinkToken, revokeStoreLink } from "./store-settings.service.js";
 import { VoucherAdminService } from "./voucher-admin.service.js";
 import { StoreAdminService } from "./store-admin.service.js";
 import { AnalyticsService } from "./analytics.service.js";
@@ -610,6 +611,28 @@ export class AdminController {
     requireUser(user);
     const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.MANAGE);
     const result = await this.settingsAdmin.updateLink(storeId, body);
+    if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+    return { ...result.value, storeId };
+  }
+
+  /** POST /admin/store-link/rotate — rotate the public-link access token (revokes old, reactivates). */
+  @Post("store-link/rotate")
+  async rotateStoreLink(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
+    const user = req.user;
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.MANAGE);
+    const result = await rotateStoreLinkToken(storeId);
+    if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+    return { ...result.value, storeId };
+  }
+
+  /** POST /admin/store-link/revoke — revoke the public link (storefront 404s until rotated). */
+  @Post("store-link/revoke")
+  async revokeStoreLink(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
+    const user = req.user;
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.MANAGE);
+    const result = await revokeStoreLink(storeId);
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
     return { ...result.value, storeId };
   }

@@ -46,7 +46,7 @@ export default function StoreLinkPanel() {
 
   useEffect(() => { load(); }, []);
 
-  const link = data?.publicLink ? `${window.location.origin}/${data.slug}` : null;
+  const link = data?.publicLink ? `${window.location.origin}/${data.slug}?token=${encodeURIComponent(data.publicLink.token)}` : null;
 
   useEffect(() => {
     if (!link) return;
@@ -116,6 +116,36 @@ export default function StoreLinkPanel() {
     reader.readAsDataURL(file);
   };
 
+  const rotate = async () => {
+    if (!window.confirm("Rotate the store link? Everyone with the CURRENT link will need the new one.")) return;
+    setError(null);
+    try {
+      const res = await fetch(`${API_URL}/admin/store-link/rotate`, {
+        method: "POST",
+        headers: adminHeaders(),
+      });
+      if (!res.ok) { const d = await res.json(); setError(d?.message ?? "Rotate failed"); return; }
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Rotate failed");
+    }
+  };
+
+  const revoke = async () => {
+    if (!window.confirm("Revoke the store link? The storefront will stop loading until you regenerate it.")) return;
+    setError(null);
+    try {
+      const res = await fetch(`${API_URL}/admin/store-link/revoke`, {
+        method: "POST",
+        headers: adminHeaders(),
+      });
+      if (!res.ok) { const d = await res.json(); setError(d?.message ?? "Revoke failed"); return; }
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Revoke failed");
+    }
+  };
+
   return (
     <div>
       <h1 className="h4 mb-3"><i className="bi bi-link-45deg me-2"></i>Store Link</h1>
@@ -147,6 +177,19 @@ export default function StoreLinkPanel() {
                           <i className="bi bi-box-arrow-up-right me-1"></i>Open store
                         </a>
                       </div>
+                      <div className="d-flex gap-2 mt-2">
+                        <button className="btn btn-sm btn-outline-warning" onClick={rotate} title="Generate a new link token (old link stops working)">
+                          <i className="bi bi-arrow-repeat me-1"></i>Regenerate link
+                        </button>
+                        <button className="btn btn-sm btn-outline-danger" onClick={revoke} title="Stop the storefront from loading">
+                          <i className="bi bi-x-octagon me-1"></i>Revoke link
+                        </button>
+                      </div>
+                      {data.publicLink?.status === "REVOKED" && (
+                        <div className="alert alert-warning py-1 px-2 small mb-1 mt-2">
+                          <i className="bi bi-exclamation-triangle me-1"></i>This link is <strong>revoked</strong> — regenerate to reopen the store.
+                        </div>
+                      )}
                     </>
                   ) : (
                     <p className="text-muted small mb-0">No public link configured.</p>

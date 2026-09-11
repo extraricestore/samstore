@@ -1,5 +1,6 @@
 // Store settings admin service — tenant-scoped store configuration.
 
+import { randomBytes } from "node:crypto";
 import { prisma } from "../persistence/prisma-repositories.js";
 import type { ApiError } from "@sam-store/contracts";
 
@@ -141,4 +142,40 @@ export class StoreSettingsService {
     });
     return { ok: true, value: { id: storeId } };
   }
+}
+
+// ─────────────────────────────── Store link tokens (Module 2) ───────────────────────────────
+
+function newLinkToken(): string {
+  return `lnk_${randomBytes(24).toString("base64url")}`;
+}
+
+/**
+ * Rotate the store's public-link token: generates a new high-entropy token,
+ * keeps the link ACTIVE (a rotation also reactivates a revoked link), and marks
+ * rotatedAt. The previous token stops working immediately.
+ */
+export async function rotateStoreLinkToken(storeId: string): Promise<{ ok: true; value: { token: string; slug: string } } | { ok: false; error: ApiError }> {
+  const link = await prisma.publicStoreLink.findUnique({ where: { storeId } });
+  if (!link) return { ok: false, error: { type: "not_found", message: "Store link not found" } };
+  const token = newLinkToken();
+  await prisma.publicStoreLink.update({
+    where: { id: link.id },
+    data: { token, status: "ACTIVE", rotatedAt: new Date(), revokedAt: null },
+  });
+  return { ok: true, value: { token, slug: link.slug } };
+}
+
+/**
+ * Revoke the store's public link: the storefront stops resolving until the
+ * owner rotates (reactivates) it. `revokedAt` records when.
+ */
+export async function revokeStoreLink(storeId: string): Promise<{ ok: true; value: { revoked: true } } | { ok: false; error: ApiError }> {
+  const link = await prisma.publicStoreLink.findUnique({ where: { storeId } });
+  if (!link) return { ok: false, error: { type: "not_found", message: "Store link not found" } };
+  await prisma.publicStoreLink.update({
+    where: { id: link.id },
+    data: { status: "REVOKED", revokedAt: new Date() },
+  });
+  return { ok: true, value: { revoked: true } };
 }
