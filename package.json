@@ -21,9 +21,11 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
-    "db:seed": "tsx prisma/seed.ts"
+    "db:seed": "tsx prisma/seed.ts",
+    "test:e2e": "playwright test --config apps/api/playwright.config.ts"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@prisma/client": "^6.1.0",
     "@types/express": "^5.0.6",
     "@types/jsonwebtoken": "^9.0.10",

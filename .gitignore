@@ -24,3 +24,7 @@ Thumbs.db
 coverage/
 
 *.tsbuildinfo
+
+# Playwright E2E artifacts
+apps/api/test-results/
+apps/api/playwright-report/
