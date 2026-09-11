@@ -442,57 +442,64 @@ export class PrismaOrderRepository implements OrderRepository {
         });
       }
 
-      // 3) Voucher redemption row (unique (voucherId, orderId) prevents double-redeem)
+      // 3) Voucher redemption row (GUAURDED atomic counter — single UPDATE, safe under
+      // the transaction pooler; two concurrent checkouts CANNOT both pass the limit)
       if (effects.voucherRedemption) {
+        const consumed = await tx.$executeRawUnsafe(
+          'UPDATE "Voucher" SET "usedCount" = "usedCount" + 1 WHERE "id" = $1 AND ("maxRedemptions" IS NULL OR "usedCount" < "maxRedemptions")',
+          effects.voucherRedemption.voucherId,
+        );
+        if (consumed === 0) throw new Error("Voucher redemption limit reached");
         await tx.voucherRedemption.create({
           data: { voucherId: effects.voucherRedemption.voucherId, storeId: order.storeId, orderId: o.id },
         });
       }
 
-      // 4) Loyalty: deduct points + ledger entry (single tx — no overdraw under concurrency)
+      // 4) Loyalty: guarded atomic deduction (single UPDATE) + ledger entry
       if (effects.loyalty) {
+        const consumed = await tx.$executeRawUnsafe(
+          'UPDATE "StoreCustomer" SET "loyaltyBalancePoints" = "loyaltyBalancePoints" - $2 WHERE "id" = $1 AND "loyaltyBalancePoints" >= $2',
+          effects.loyalty.storeCustomerId,
+          effects.loyalty.points,
+        );
+        if (consumed === 0) throw new Error("Insufficient loyalty points");
         const sc = await tx.storeCustomer.findUnique({ where: { id: effects.loyalty.storeCustomerId } });
-        if (sc && sc.loyaltyBalancePoints >= effects.loyalty.points) {
-          await tx.storeCustomer.update({
-            where: { id: sc.id },
-            data: { loyaltyBalancePoints: { decrement: effects.loyalty.points } },
-          });
-          await tx.loyaltyEntry.create({
-            data: {
-              storeId: order.storeId,
-              customerId: effects.loyalty.customerId,
-              storeCustomerId: sc.id,
-              type: "REDEEM",
-              points: -effects.loyalty.points,
-              balanceAfter: sc.loyaltyBalancePoints - effects.loyalty.points,
-              orderId: o.id,
-              description: "checkout redemption",
-            },
-          });
-        }
+        await tx.loyaltyEntry.create({
+          data: {
+            storeId: order.storeId,
+            customerId: effects.loyalty.customerId,
+            storeCustomerId: effects.loyalty.storeCustomerId,
+            type: "REDEEM",
+            points: -effects.loyalty.points,
+            balanceAfter: sc?.loyaltyBalancePoints ?? 0,
+            orderId: o.id,
+            description: "checkout redemption",
+          },
+        });
       }
 
-      // 5) Credit purchase: balance increment + ledger entry
+      // 5) Credit purchase: guarded atomic balance increment (single UPDATE) + ledger entry
       if (effects.credit) {
+        const consumed = await tx.$executeRawUnsafe(
+          'UPDATE "StoreCustomer" SET "creditBalanceMinor" = "creditBalanceMinor" + $2 WHERE "id" = $1 AND ("creditLimitMinor" IS NULL OR "creditLimitMinor" <= 0 OR "creditBalanceMinor" + $2 <= "creditLimitMinor")',
+          effects.credit.storeCustomerId,
+          effects.credit.amountMinor,
+        );
+        if (consumed === 0) throw new Error("Credit limit exceeded");
         const sc = await tx.storeCustomer.findUnique({ where: { id: effects.credit.storeCustomerId } });
-        if (sc) {
-          await tx.storeCustomer.update({
-            where: { id: sc.id },
-            data: { creditBalanceMinor: { increment: effects.credit.amountMinor } },
-          });
-          await tx.creditEntry.create({
-            data: {
-              storeId: order.storeId,
-              storeCustomerId: sc.id,
-              orderId: o.id,
-              type: "purchase",
-              amountMinor: effects.credit.amountMinor,
-              startAt: new Date(),
-              dueAt: new Date(Date.now() + 30 * 86_400_000),
-              createdBy: "checkout",
-            },
-          });
-        }
+        if (!sc) throw new Error("Credit customer not found");
+        await tx.creditEntry.create({
+          data: {
+            storeId: order.storeId,
+            storeCustomerId: sc.id,
+            orderId: o.id,
+            type: "purchase",
+            amountMinor: effects.credit.amountMinor,
+            startAt: new Date(),
+            dueAt: new Date(Date.now() + 30 * 86_400_000),
+            createdBy: "checkout",
+          },
+        });
       }
 
       return o;

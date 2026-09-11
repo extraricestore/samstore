@@ -98,21 +98,23 @@ export class CreditService {
     return { ok: true };
   }
 
-  /** Record an online credit purchase (after order creation). */
-  async recordPurchase(orderId: string, storeId: string, storeCustomerId: string, amountMinor: number, startAt?: string, dueAt?: string): Promise<void> {
-    const { start, due } = await this.defaultDueAt(storeId, startAt ? new Date(startAt) : undefined, dueAt);
-    await prisma.$transaction(async (tx) => {
-      await tx.creditEntry.create({
-        data: { storeId, storeCustomerId, orderId, type: "purchase", amountMinor, startAt: start, dueAt: due, note: "Online credit checkout", createdBy: null },
+  /** Record an online credit purchase (after order creation). M6: order-idempotent — a retry never double-counts. */
+    async recordPurchase(orderId: string, storeId: string, storeCustomerId: string, amountMinor: number, startAt?: string, dueAt?: string): Promise<void> {
+      const { start, due } = await this.defaultDueAt(storeId, startAt ? new Date(startAt) : undefined, dueAt);
+      await prisma.$transaction(async (tx) => {
+        const existing = await tx.creditEntry.findFirst({ where: { storeId, orderId, type: "purchase" } });
+        if (existing) return; // idempotent — the purchase for this order is already recorded
+        await tx.creditEntry.create({
+          data: { storeId, storeCustomerId, orderId, type: "purchase", amountMinor, startAt: start, dueAt: due, note: "Online credit checkout", createdBy: null },
+        });
+        await tx.storeCustomer.update({
+          where: { id: storeCustomerId },
+          data: { creditBalanceMinor: { increment: amountMinor } },
+        });
       });
-      await tx.storeCustomer.update({
-        where: { id: storeCustomerId },
-        data: { creditBalanceMinor: { increment: amountMinor } },
-      });
-    });
-  }
+    }
 
-  /** Record a cash payment against utang. v4: signature REQUIRED (data-URL PNG). */
+    /** Record a cash payment against utang. v4: signature REQUIRED (data-URL PNG). */
     async recordPayment(storeId: string, storeCustomerId: string, amountMinor: number, note: string | undefined, actorId: string, signatureData?: string): Promise<CreditResult<{ balanceMinor: number; paymentId: string }>> {
       if (!Number.isInteger(amountMinor) || amountMinor <= 0) {
         return { ok: false, error: { type: "validation", errors: ["amountMinor must be a positive integer"] } };
@@ -132,15 +134,15 @@ export class CreditService {
         await tx.creditEntry.create({
           data: { storeId, storeCustomerId, type: "payment", amountMinor: -pay, note: note?.trim() ?? "Utang payment", createdBy: actorId },
         });
-      const updated = await tx.storeCustomer.update({
-              where: { id: sc.id },
-              data: { creditBalanceMinor: { decrement: pay } },
-            });
-            return { paymentId: p.id, balanceMinor: updated.creditBalanceMinor };
-          });
-          bustLedger(storeId);
-          return { ok: true, value: payment };
-        }
+        const updated = await tx.storeCustomer.update({
+          where: { id: sc.id },
+          data: { creditBalanceMinor: { decrement: pay } },
+        });
+        return { paymentId: p.id, balanceMinor: updated.creditBalanceMinor };
+      });
+      bustLedger(storeId);
+      return { ok: true, value: payment };
+    }
 
   /** Customers with outstanding balances (Utang list). V1: status = unpaid | paid.
    *  Filters: search (customer name, case-insensitive), from/to (inclusive createdAt range on CreditEntry). */

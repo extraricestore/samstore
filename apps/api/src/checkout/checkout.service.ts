@@ -319,6 +319,12 @@ export class CheckoutService {
             return { ok: true, value: this.toResponse(existing) };
           }
         }
+        // M6: the atomic tx throws these when a row-lock re-check fails under
+        // concurrency — surface as a clean conflict, never a 500.
+        const msg = e instanceof Error ? e.message : "";
+        if (msg.includes("Voucher redemption limit") || msg.includes("Insufficient loyalty") || msg.includes("Credit limit") || msg.includes("Credit customer not found")) {
+          return { ok: false, error: { type: "conflict", message: msg } };
+        }
         throw e;
       }
     } else {

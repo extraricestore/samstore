@@ -500,6 +500,7 @@ model Voucher {
   discountMinor  Int // flat discount in minor units (reserved for % variant later)
   minOrderMinor  Int       @default(0)
   maxRedemptions Int? // null = unlimited
+  usedCount      Int       @default(0) // M6: atomic counter guard for concurrent redemptions
   startsAt       DateTime?
   expiresAt      DateTime?
   isActive       Boolean   @default(true)

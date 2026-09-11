@@ -160,3 +160,93 @@ test("createAtomic with a duplicate idempotency key throws P2002 (no partial wri
   const count = await prisma.order.count({ where: { idempotencyKey: key } });
   assert.equal(count, 1);
 });
+
+test("M6: the voucher usedCount guard blocks at the limit (atomic UPDATE semantics)", async () => {
+  const store = await prisma.store.create({ data: { slug: `${run}-vmax`.toLowerCase(), name: `M6 ${run}` } });
+  ids.stores.push(store.id);
+  const product = await prisma.product.create({ data: { storeId: store.id, sku: `M6V-${store.id.slice(-4)}`, name: "P", priceMinor: 1000 } });
+  ids.products.push(product.id);
+  await prisma.stockLevel.create({ data: { storeId: store.id, productId: product.id, quantityOnHand: 100, quantityReserved: 0 } });
+  const voucher = await prisma.voucher.create({ data: { storeId: store.id, code: "M6ONLY", discountMinor: 100, maxRedemptions: 1 } });
+  ids.vouchers.push(voucher.id);
+
+  const repo = new PrismaOrderRepository();
+  const mk = (tag: string) => ({
+    id: randomId(),
+    orderNumber: `V${tag}-${store.id.slice(-4)}`,
+    storeId: store.id,
+    status: "RECEIVED",
+    currencyCode: "PHP",
+    deliveryType: "delivery",
+    subtotalMinor: 1000, deliveryFeeMinor: 0, discountMinor: 0, totalMinor: 1000,
+    snapshot: {}, paymentMethod: "cod", paymentStatus: "PENDING",
+    idempotencyKey: `m6v-${tag}-${store.id.slice(-4)}`,
+    cartToken: `c-${tag}`,
+    customerName: "C", customerPhone: "+63", deliveryAddressLine1: "x",
+    deliveryAddressLine2: null, landmark: null, deliverySchedule: null, notes: null,
+    claimToken: null, items: [{ productId: product.id, productName: "P", sku: "P", unitPriceMinor: 1000, quantity: 1, lineTotalMinor: 1000 }],
+    storeCustomerId: null, createdAt: new Date(),
+  });
+
+  // First checkout consumes the voucher (count 0 -> 1).
+  await repo.createAtomic(mk("a"), { voucherRedemption: { voucherId: voucher.id }, stockReservations: [{ productId: product.id, quantity: 1 }] });
+
+  // Second checkout MUST fail the guard — the UPDATE affects 0 rows -> limit conflict.
+  let threw = false;
+  try {
+    await repo.createAtomic(mk("b"), { voucherRedemption: { voucherId: voucher.id }, stockReservations: [{ productId: product.id, quantity: 1 }] });
+  } catch (e) {
+    threw = true;
+    assert.ok(String((e as Error).message).includes("Voucher redemption limit"), `expected limit conflict, got ${(e as Error).message}`);
+  }
+  assert.equal(threw, true, "second redemption must be blocked at the limit");
+  const redemptions = await prisma.voucherRedemption.count({ where: { voucherId: voucher.id } });
+  assert.equal(redemptions, 1, "voucher redeemed exactly once");
+  const vNow = await prisma.voucher.findUnique({ where: { id: voucher.id } });
+  assert.equal(vNow?.usedCount, 1, "counter stayed at the limit");
+});
+
+test("M6: the credit-limit guarded UPDATE blocks a purchase over the balance ceiling", async () => {
+  const store = await prisma.store.create({ data: { slug: `${run}-clim`.toLowerCase(), name: `M6c ${run}` } });
+  ids.stores.push(store.id);
+  const product = await prisma.product.create({ data: { storeId: store.id, sku: `M6C-${store.id.slice(-4)}`, name: "P2", priceMinor: 100000 } });
+  ids.products.push(product.id);
+  await prisma.stockLevel.create({ data: { storeId: store.id, productId: product.id, quantityOnHand: 100, quantityReserved: 0 } });
+  const customer = await prisma.customer.create({ data: { name: "M6 Buyer", phone: null, email: null, passwordHash: null } });
+  ids.customers.push(customer.id);
+  // Limit ₱1,500 — one ₱1,000 purchase fits, a second would breach it.
+  const sc = await prisma.storeCustomer.create({
+    data: { storeId: store.id, customerId: customer.id, creditApproved: true, creditLimitMinor: 150000, creditBalanceMinor: 0 },
+  });
+
+  const repo = new PrismaOrderRepository();
+  const mk = (tag: string) => ({
+    id: randomId(),
+    orderNumber: `CL${tag}-${store.id.slice(-4)}`,
+    storeId: store.id,
+    status: "RECEIVED",
+    currencyCode: "PHP",
+    deliveryType: "delivery",
+    subtotalMinor: 100000, deliveryFeeMinor: 0, discountMinor: 0, totalMinor: 100000,
+    snapshot: {}, paymentMethod: "credit", paymentStatus: "PENDING",
+    idempotencyKey: `m6c-${tag}-${store.id.slice(-4)}`,
+    cartToken: `cc-${tag}`,
+    customerName: "C", customerPhone: "+63", deliveryAddressLine1: "x",
+    deliveryAddressLine2: null, landmark: null, deliverySchedule: null, notes: null,
+    claimToken: null, items: [{ productId: product.id, productName: "P2", sku: "P2", unitPriceMinor: 100000, quantity: 1, lineTotalMinor: 100000 }],
+    storeCustomerId: sc.id, createdAt: new Date(),
+  });
+
+  await repo.createAtomic(mk("a"), { credit: { storeCustomerId: sc.id, amountMinor: 100000 }, stockReservations: [{ productId: product.id, quantity: 1 }] });
+
+  let threw = false;
+  try {
+    await repo.createAtomic(mk("b"), { credit: { storeCustomerId: sc.id, amountMinor: 100000 }, stockReservations: [{ productId: product.id, quantity: 1 }] });
+  } catch (e) {
+    threw = true;
+    assert.ok(String((e as Error).message).includes("Credit limit"), `expected credit-limit conflict, got ${(e as Error).message}`);
+  }
+  assert.equal(threw, true, "over-limit credit purchase must be blocked");
+  const scNow = await prisma.storeCustomer.findUnique({ where: { id: sc.id } });
+  assert.equal(scNow?.creditBalanceMinor, 100000, "balance never exceeds the limit");
+});
