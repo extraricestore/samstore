@@ -13,6 +13,13 @@ export type AdminResult<T> = { ok: true; value: T } | { ok: false; error: ApiErr
 
 export class OrderAdminService {
   constructor(private readonly notify?: NotificationsService) {}
+
+/** M8: unified delivery signal — the EXPLICIT fulfillmentType (M3 backfilled from the
+ *  address); the address is only a fallback for rows created before the backfill. */
+  private isDeliveryOrder(order: { fulfillmentType?: string | null; deliveryType?: string | null; deliveryAddressLine1?: string | null }): boolean {
+    if (order.fulfillmentType) return order.fulfillmentType === "DELIVERY";
+    return Boolean(order.deliveryAddressLine1?.trim()) || order.deliveryType === "delivery";
+  }
   /** Transition an order's status (forward state machine; reason for manual overrides). */
   async transition(
     storeId: string,
@@ -26,7 +33,7 @@ export class OrderAdminService {
 
     const from = order.status as OrderState;
     // Delivery orders must stay in the delivery pipeline — COMPLETED only via courier DELIVERED (or prepaid payment).
-    if (toStatus === "COMPLETED" && (order.deliveryType === "delivery" || (order.deliveryAddressLine1 && order.deliveryAddressLine1.trim().length > 0))) {
+    if (toStatus === "COMPLETED" && this.isDeliveryOrder(order)) {
       return { ok: false, error: { type: "conflict", message: "Delivery orders must go through the delivery pipeline" } };
     }
     try {
@@ -176,7 +183,7 @@ export class OrderAdminService {
   async sendForDelivery(storeId: string, orderId: string): Promise<AdminResult<{ id: string; status: string }>> {
     const order = await prisma.order.findFirst({ where: { storeId, id: orderId } });
     if (!order) return { ok: false, error: { type: "not_found", message: "Order not found" } };
-    if (order.deliveryType !== "delivery") {
+    if (!this.isDeliveryOrder(order)) {
       return { ok: false, error: { type: "conflict", message: "Only delivery-type orders can be sent for delivery" } };
     }
     if (!["CONFIRMED", "PREPARING", "READY"].includes(order.status)) {
@@ -202,7 +209,7 @@ export class OrderAdminService {
   async completeNow(storeId: string, orderId: string): Promise<AdminResult<{ id: string; status: string }>> {
     const order = await prisma.order.findFirst({ where: { storeId, id: orderId } });
     if (!order) return { ok: false, error: { type: "not_found", message: "Order not found" } };
-    if (order.deliveryType === "delivery" || (order.deliveryAddressLine1 && order.deliveryAddressLine1.trim().length > 0)) {
+    if (this.isDeliveryOrder(order)) {
       return { ok: false, error: { type: "conflict", message: "Delivery orders must go through the delivery pipeline" } };
     }
     if (!["RECEIVED", "CONFIRMED", "READY"].includes(order.status)) {

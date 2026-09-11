@@ -383,9 +383,10 @@ export class AdminController {
             ];
           }
           // Source / payment / fulfillment facets (V2 pipeline filters).
-          if (source) where.source = source; // online | pos | PRE_ORDER
-          if (payment) where.paymentMethod = payment; // cod | credit
-          if (fulfillment) where.deliveryType = fulfillment; // delivery | pickup
+                    if (source) where.source = source; // online | pos | PRE_ORDER
+                    if (payment) where.paymentMethod = payment; // cod | credit
+                    // M8: the fulfillment facet now filters the EXPLICIT fulfillmentType enum.
+                    if (fulfillment) where.fulfillmentType = fulfillment === "pickup" ? "PICKUP" : "DELIVERY";
       const list = await prisma.order.findMany({
             where,
             orderBy: { createdAt: "desc" },
@@ -393,8 +394,8 @@ export class AdminController {
             select: {
                         id: true, orderNumber: true, status: true, totalMinor: true, currencyCode: true,
                         customerName: true, customerPhone: true, createdAt: true, paymentStatus: true, source: true,
-                        deliveryType: true, paymentMethod: true, signatureData: true, signatureAt: true,
-                        deliveryAddressLine1: true,
+                        deliveryType: true, deliveryAddressLine1: true, fulfillmentType: true,
+                                                paymentMethod: true, signatureData: true, signatureAt: true,
                       },
           });
           cacheSet(cacheKeyStr, list, 5_000);
@@ -430,8 +431,8 @@ export class AdminController {
                                             ];
                                           }
                                           if (source) where.source = source;
-                                                                if (payment) where.paymentMethod = payment;
-                                                                if (fulfillment) where.deliveryType = fulfillment;
+                                                                                                          if (payment) where.paymentMethod = payment;
+                                                                                                          if (fulfillment) where.fulfillmentType = fulfillment === "pickup" ? "PICKUP" : "DELIVERY"; // M8
                                                                 if (status) {
                                                                   const statuses = status.split(",").filter((s) => ORDER_STATES.includes(s as OrderState));
                                                                   if (statuses.length === 0) return { counts: {}, storeId };
