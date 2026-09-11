@@ -20,9 +20,14 @@ async function makeStore() {
 }
 
 after(async () => {
-  if (logIds.length) await prisma.notificationLog.deleteMany({ where: { id: { in: logIds } } });
-  if (eventIds.length) await prisma.outboxEvent.deleteMany({ where: { id: { in: eventIds } } });
-  if (storeIds.length) await prisma.store.deleteMany({ where: { id: { in: storeIds } } });
+  if (storeIds.length) {
+    // Defensive: remove ANY outbox/notification rows that reference these stores
+    // (including orphans from an aborted earlier run of this file), so the store
+    // delete never hits an FK violation.
+    await prisma.outboxEvent.deleteMany({ where: { storeId: { in: storeIds } } });
+    await prisma.notificationLog.deleteMany({ where: { storeId: { in: storeIds } } });
+    await prisma.store.deleteMany({ where: { id: { in: storeIds } } });
+  }
   await prisma.$disconnect();
 });
 
