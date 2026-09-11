@@ -1,6 +1,20 @@
 # SAM STORE — Progress Log
 
-Updated: 2026-09-04 · Peddlr upgrade P1–P12 **all complete** · Active model: `deepseek/deepseek-v4-flash-0731` (openrouter)
+Updated: 2026-09-11 · Project hardening Module 1 (tenant authorization) ✅ · Active model: `deepseek/deepseek-v4-flash-0731` (openrouter)
+
+## Project hardening — Module 1: tenant authorization & registration closure (✅, 210 tests)
+
+| Item | Status |
+|---|---|
+| Public `/auth/register` no longer accepts `storeId` or `role` — creates a bare `STORE_OWNER` user with **no** membership and no `storeId` JWT claim (defense-in-depth test included) | ✅ |
+| **Demo-store fallback removed** — no active membership ⇒ **403 denied** (was: silently routed to `cmtifdks2000094ic1j9w8th7`) | ✅ |
+| New `apps/api/src/auth/tenant-context.ts` — `resolveTenant()`: per-store ACTIVE membership role is the authorization source (not the global JWT role); platform admin is an explicit bypass requiring a store target; inbound `X-Store-Id` must be an ACTIVE membership | ✅ |
+| Migrated **8 controllers** to `resolveTenant` (`admin`, `payments`, `credit`, `pos`, `expenses`, `inventory`, `purchases`, `reports`, `delivery`) — removed 9 duplicated per-controller `resolveStore`/`DEMO_STORE_ID` blocks + global `ADMIN_ROLES`/`MANAGE_ROLES` consts | ✅ |
+| Order transitions & customer-approval audit now record the **membership role** (`ctx.role`), not the global token role | ✅ |
+| Owner onboarding = invite/admin-created only (operator decision 2026-09-11) | ✅ |
+| Gate fix: new `scripts/run-tests.mjs` runs test files **sequentially** — node `--test` ran ~20 DB files concurrently and saturated the Supabase pooler (`pool_size: 15`, `FATAL: max clients reached`); now deterministic 210/210 | ✅ |
+
+Live probes (all passed): register with smuggled `storeId`+`role:"PLATFORM_ADMIN"` → 201 with role `STORE_OWNER`, no store claim; `/admin/me` → storeId null; `/admin/stores/mine` → 0 stores; `/admin/orders` with demo-store header → **403**; without header → **403**.
 
 ## UI/UX upgrade — Modules U1–U8 (all ✅)
 | # | Module | Status |

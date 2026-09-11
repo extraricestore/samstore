@@ -42,8 +42,6 @@ export class AuthService {
     email: string;
     password: string;
     name?: string;
-    storeId?: string;
-    role?: string;
   }): Promise<AuthResult<{ token: string; user: AuthUserSummary }>> {
     const email = input.email?.trim().toLowerCase() ?? "";
     if (!EMAIL_RE.test(email)) {
@@ -52,29 +50,25 @@ export class AuthService {
     if (!input.password || input.password.length < 8) {
       return { ok: false, error: { type: "validation", errors: ["Password must be at least 8 characters"] } };
     }
-    const role = input.role ?? "STORE_OWNER";
-    if (!(ALLOWED_ROLES as readonly string[]).includes(role)) {
-      return { ok: false, error: { type: "validation", errors: [`Unknown role: ${role}`] } };
-    }
+    // Module 1 (invite/admin-created owner only): public registration NEVER binds a
+    // store or accepts a client-supplied role. Any storeId/role sent by a caller is
+    // ignored; the user is created as a bare STORE_OWNER-role account with NO
+    // membership. A platform admin (or existing owner) later creates a store and
+    // binds this user as OWNER via /admin/stores, or invites them via /admin/team.
+    const role = "STORE_OWNER";
 
     const existing = await this.repo.findByEmail(email);
     if (existing) return { ok: false, error: { type: "conflict", message: "Email already registered" } };
 
     const passwordHash = await hashPassword(input.password);
-    const user = await this.repo.createUser(
-      email,
-      passwordHash,
-      input.name ?? null,
-      role,
-      input.storeId ? { storeId: input.storeId, role: "OWNER" } : undefined,
-    );
+    const user = await this.repo.createUser(email, passwordHash, input.name ?? null, role);
 
     const token = signToken(
       {
         sub: user.id,
         role: user.role,
         email: user.email,
-        storeId: input.storeId ?? undefined,
+        storeId: undefined,
       },
       this.config,
     );

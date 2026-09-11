@@ -1,11 +1,8 @@
 import { Controller, Get, Headers, HttpException, HttpStatus, Inject, Query, Req, Res, UseGuards } from "@nestjs/common";
 import { JwtAuthGuard, type AuthPrincipal } from "../auth/auth.guard.js";
+import { resolveTenant, TENANT_ROLES } from "../auth/tenant-context.js";
 import { prisma } from "../persistence/prisma-repositories.js";
 import { REPORTS_SERVICE, ReportsService } from "./reports.service.js";
-
-// Decision #9: profit/expense/COGS = OWNER + MANAGER only; sales-level = all admins.
-const PROFIT_ROLES = ["STORE_OWNER", "PLATFORM_ADMIN", "MANAGER"];
-const SALES_ROLES = ["STORE_OWNER", "PLATFORM_ADMIN", "MANAGER", "STAFF", "SALES_AGENT"];
 
 function parseRange(from?: string, to?: string, days = 30): { from: Date; to: Date } {
   const toDate = to ? new Date(to) : new Date();
@@ -18,40 +15,11 @@ function parseRange(from?: string, to?: string, days = 30): { from: Date; to: Da
 export class ReportsController {
   constructor(@Inject(REPORTS_SERVICE) private readonly reportsSvc: ReportsService) {}
 
-  private async resolveStore(user: AuthPrincipal, header?: string): Promise<string> {
-    if (user.role === "PLATFORM_ADMIN") {
-      return header || (await prisma.userStore.findFirst({ where: { userId: user.sub, status: "ACTIVE" } }))?.storeId || "cmtifdks2000094ic1j9w8th7";
-    }
-    if (header) {
-      const m = await prisma.userStore.findUnique({ where: { userId_storeId: { userId: user.sub, storeId: header } } });
-      if (m?.status === "ACTIVE") return header;
-      throw new HttpException({ type: "forbidden", message: "Not a member of that store" }, HttpStatus.FORBIDDEN);
-    }
-    if (user.storeId) {
-      const m = await prisma.userStore.findUnique({ where: { userId_storeId: { userId: user.sub, storeId: user.storeId } } });
-      if (m?.status === "ACTIVE") return user.storeId;
-    }
-    return (await prisma.userStore.findFirst({ where: { userId: user.sub, status: "ACTIVE" } }))?.storeId ?? "cmtifdks2000094ic1j9w8th7";
-  }
-
-  private requireProfit(user: AuthPrincipal | undefined): asserts user is AuthPrincipal {
-    if (!user || !PROFIT_ROLES.includes(user.role)) {
-      throw new HttpException({ type: "forbidden", message: "Owner or manager only" }, HttpStatus.FORBIDDEN);
-    }
-  }
-
-  private requireSales(user: AuthPrincipal | undefined): asserts user is AuthPrincipal {
-    if (!user || !SALES_ROLES.includes(user.role)) {
-      throw new HttpException({ type: "forbidden", message: "Not authorized" }, HttpStatus.FORBIDDEN);
-    }
-  }
-
   /** GET /admin/reports/profit?from=&to= — OWNER/MANAGER only (decision #9). */
   @Get("reports/profit")
   async profit(@Req() req: Request & { user?: AuthPrincipal }, @Query("from") from?: string, @Query("to") to?: string, @Headers("x-store-id") headerStoreId?: string) {
     const user = req.user;
-    this.requireProfit(user);
-    const storeId = await this.resolveStore(user, headerStoreId);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.OWNER_MANAGER);
     const { from: f, to: t } = parseRange(from, to);
     return { ...(await this.reportsSvc.profitSummary(storeId, f, t)), storeId };
   }
@@ -60,8 +28,7 @@ export class ReportsController {
   @Get("reports/sales")
   async sales(@Req() req: Request & { user?: AuthPrincipal }, @Query("from") from?: string, @Query("to") to?: string, @Headers("x-store-id") headerStoreId?: string) {
     const user = req.user;
-    this.requireSales(user);
-    const storeId = await this.resolveStore(user, headerStoreId);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.VIEW);
     const { from: f, to: t } = parseRange(from, to);
     return { ...(await this.reportsSvc.salesReport(storeId, f, t)), storeId };
   }
@@ -70,8 +37,7 @@ export class ReportsController {
   @Get("reports/profit.csv")
   async profitCsv(@Req() req: Request & { user?: AuthPrincipal }, @Query("from") from?: string, @Query("to") to?: string, @Headers("x-store-id") headerStoreId?: string, @Res() res?: any) {
     const user = req.user;
-    this.requireProfit(user);
-    const storeId = await this.resolveStore(user, headerStoreId);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.OWNER_MANAGER);
     const { from: f, to: t } = parseRange(from, to);
     const r = await this.reportsSvc.profitSummary(storeId, f, t);
     const rows = [

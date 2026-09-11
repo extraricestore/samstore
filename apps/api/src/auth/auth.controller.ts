@@ -31,14 +31,16 @@ export class AuthController {
   constructor(@Inject(AUTH_SERVICE) private readonly auth: AuthService) {}
 
   /**
-   * POST /auth/register — create a user.
-   * Public registration is restricted to STORE_OWNER (platform admins are seeded).
+   * POST /auth/register — create a bare user account.
+   * Module 1 (invite/admin-created owner only): storeId/role are NOT accepted.
+   * The user is created with no store membership; a platform admin binds them as
+   * a store owner via /admin/stores, or an existing owner invites them via /admin/team.
    */
   @Post("register")
   async register(
-    @Body() body: { email: string; password: string; name?: string; storeId?: string },
+    @Body() body: { email: string; password: string; name?: string },
   ) {
-    const r = await this.auth.register({ ...body, role: "STORE_OWNER" });
+    const r = await this.auth.register(body);
     if (!r.ok) throw new HttpException(r.error, statusFor(r.error));
     return r.value;
   }

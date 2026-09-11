@@ -6,7 +6,7 @@ import type { AuthUserRecord, AuthRepository } from "./auth.repository.js";
 import { hashPassword } from "./auth.domain.js";
 
 class InMemoryAuthRepo implements AuthRepository {
-  private users = new Map<string, AuthUserRecord>();
+  users = new Map<string, AuthUserRecord>();
   async findByEmail(email: string): Promise<AuthUserRecord | null> {
     return this.users.get(email.toLowerCase()) ?? null;
   }
@@ -56,6 +56,31 @@ test("register rejects duplicate email", async () => {
   assert.equal(r.ok, false);
   if (r.ok) return;
   assert.equal(r.error.type, "conflict");
+});
+
+test("register ignores any client-supplied storeId/role — no store binding, never platform admin", async () => {
+  const { svc, repo } = makeService();
+  // Defense-in-depth: even if a caller smuggles these keys (the controller no
+  // longer accepts them), the service must not bind a store or elevate the role.
+  const r = await svc.register({
+    email: "sneaky@store.com",
+    password: "password123",
+    storeId: "someone-elses-store",
+    role: "PLATFORM_ADMIN",
+  } as unknown as { email: string; password: string });
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+
+  const created = repo.users.get("sneaky@store.com");
+  assert.ok(created, "user was created");
+  assert.equal(created.role, "STORE_OWNER", "role is always STORE_OWNER");
+  assert.equal(created.memberships.length, 0, "no store membership is created");
+
+  // The JWT must not carry a storeId claim either.
+  const { verifyToken } = await import("./auth.domain.js");
+  const decoded = verifyToken(r.value.token, CONFIG);
+  assert.equal(decoded.storeId, undefined, "no storeId claim in the token");
+  assert.equal(decoded.role, "STORE_OWNER", "token role is STORE_OWNER");
 });
 
 test("login succeeds with correct password and fails with wrong", async () => {

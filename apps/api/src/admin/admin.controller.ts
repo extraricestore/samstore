@@ -17,6 +17,7 @@ import {
 } from "@nestjs/common";
 import type { ApiError } from "@sam-store/contracts";
 import { JwtAuthGuard, type AuthPrincipal } from "../auth/auth.guard.js";
+import { requireUser, resolveTenant, TENANT_ROLES } from "../auth/tenant-context.js";
 import { prisma } from "../persistence/prisma-repositories.js";
 import { cacheGet, cacheSet, cacheBust, cacheKey } from "../persistence/ttl-cache.js";
 import { AUTH_SERVICE, AuthService } from "../auth/auth.service.js";
@@ -32,13 +33,6 @@ import { LoyaltyService } from "../loyalty/loyalty.service.js";
 import { NOTIFICATIONS_SERVICE, type NotificationsService } from "../notifications/notifications.service.js";
 import { type OrderState, ORDER_STATES } from "../domain/order-state.js";
 
-const ADMIN_ROLES = ["STORE_OWNER", "PLATFORM_ADMIN", "MANAGER", "STAFF"];
-/** Roles that can also view orders (sales agents work the order/inbox surface). */
-const VIEW_ROLES = [...ADMIN_ROLES, "SALES_AGENT"] as const;
-/** Roles that can manage the store itself (team invites, store settings). */
-const MANAGE_ROLES = ["STORE_OWNER", "PLATFORM_ADMIN"] as const;
-const DEMO_STORE_ID = "cmtifdks2000094ic1j9w8th7"; // seeded sam-store (fallback for legacy demo users)
-
 function statusFor(error: ApiError): HttpStatus {
   switch (error.type) {
     case "unauthorized": return HttpStatus.UNAUTHORIZED;
@@ -50,28 +44,8 @@ function statusFor(error: ApiError): HttpStatus {
   }
 }
 
-function requireAdmin(user: AuthPrincipal | undefined): asserts user is AuthPrincipal {
-  if (!user) throw new HttpException({ type: "unauthorized", message: "Not authenticated" }, HttpStatus.UNAUTHORIZED);
-  if (!ADMIN_ROLES.includes(user.role)) throw new HttpException({ type: "forbidden", message: "Not authorized" }, HttpStatus.FORBIDDEN);
-}
-
-/** Allow VIEW_ROLES (orders/sales surface) — sales agents included. */
-function requireView(user: AuthPrincipal | undefined): asserts user is AuthPrincipal {
-  if (!user) throw new HttpException({ type: "unauthorized", message: "Not authenticated" }, HttpStatus.UNAUTHORIZED);
-  if (!(VIEW_ROLES as readonly string[]).includes(user.role)) {
-    throw new HttpException({ type: "forbidden", message: "Not authorized" }, HttpStatus.FORBIDDEN);
-  }
-}
-
-/** Store-management surface only (team invites, settings, products, etc.). */
-function requireManage(user: AuthPrincipal | undefined): asserts user is AuthPrincipal {
-  requireAdmin(user);
-  if (!(MANAGE_ROLES as readonly string[]).includes(user.role)) {
-    throw new HttpException({ type: "forbidden", message: "Owner or platform admin only" }, HttpStatus.FORBIDDEN);
-  }
-}
-
-// Admin endpoints — JWT-protected, tenant-scoped via membership + X-Store-Id.
+// Admin endpoints — JWT-protected, tenant-scoped via the ACTIVE per-store
+// membership role (NOT the global JWT role). See ../auth/tenant-context.ts.
 
 @Controller("admin")
 @UseGuards(JwtAuthGuard)
@@ -94,36 +68,12 @@ export class AdminController {
   }
 
   /**
-   * Resolve the tenant store for a request:
-   * 1. X-Store-Id header — must be an ACTIVE membership (or platform admin).
-   * 2. Token storeId claim — must be an ACTIVE membership.
-   * 3. First ACTIVE membership.
-   * 4. Demo fallback for legacy users with no membership → sam-store.
+   * GET /admin/me — current user summary (no tenant resolution).
    */
-  private async resolveStoreId(user: AuthPrincipal, headerStoreId?: string): Promise<string> {
-    if (user.role === "PLATFORM_ADMIN") {
-      if (headerStoreId) return headerStoreId;
-      const first = await prisma.userStore.findFirst({ where: { userId: user.sub, status: "ACTIVE" } });
-      return first?.storeId ?? DEMO_STORE_ID;
-    }
-    if (headerStoreId) {
-      const m = await prisma.userStore.findUnique({ where: { userId_storeId: { userId: user.sub, storeId: headerStoreId } } });
-      if (m && m.status === "ACTIVE") return headerStoreId;
-      throw new HttpException({ type: "forbidden", message: "Not a member of that store" }, HttpStatus.FORBIDDEN);
-    }
-    if (user.storeId) {
-      const m = await prisma.userStore.findUnique({ where: { userId_storeId: { userId: user.sub, storeId: user.storeId } } });
-      if (m && m.status === "ACTIVE") return user.storeId;
-    }
-    const first = await prisma.userStore.findFirst({ where: { userId: user.sub, status: "ACTIVE" } });
-    if (first) return first.storeId;
-    return DEMO_STORE_ID; // legacy demo users without memberships
-  }
-
-  /** GET /admin/me — current user summary (no tenant resolution). */
   @Get("me")
   async me(@Req() req: Request & { user?: AuthPrincipal }) {
     const user = req.user;
+    requireUser(user);
     if (!user) throw new HttpException({ type: "unauthorized", message: "Not authenticated" }, HttpStatus.UNAUTHORIZED);
     return { id: user.sub, email: user.email, role: user.role, storeId: user.storeId ?? null };
   }
@@ -132,7 +82,8 @@ export class AdminController {
   @Get("stores/mine")
   async myStores(@Req() req: Request & { user?: AuthPrincipal }) {
     const user = req.user;
-    requireAdmin(user);
+    requireUser(user);
+    if (!user) throw new HttpException({ type: "unauthorized", message: "Not authenticated" }, HttpStatus.UNAUTHORIZED);
     const memberships = await prisma.userStore.findMany({
       where: { userId: user.sub, status: "ACTIVE" },
       include: { store: { select: { id: true, name: true, slug: true } } },
@@ -143,12 +94,12 @@ export class AdminController {
       // ─────────────────────────────── v6: store status & data (platform admin) ───────────────────────────────
 
       /** Platform admin only — cross-store management routes. */
-      private requirePlatformAdmin(user: AuthPrincipal | undefined): asserts user is AuthPrincipal {
-        requireAdmin(user);
-        if (user.role !== "PLATFORM_ADMIN") {
-          throw new HttpException({ type: "forbidden", message: "Platform admin only" }, HttpStatus.FORBIDDEN);
-        }
-      }
+            private requirePlatformAdmin(user: AuthPrincipal | undefined): asserts user is AuthPrincipal {
+              if (!user) throw new HttpException({ type: "unauthorized", message: "Not authenticated" }, HttpStatus.UNAUTHORIZED);
+              if (user.role !== "PLATFORM_ADMIN") {
+                throw new HttpException({ type: "forbidden", message: "Platform admin only" }, HttpStatus.FORBIDDEN);
+              }
+            }
 
       /** A1 — PATCH /admin/stores/:id/status — suspend/reinstate/archive/close a store (audited). */
       @Patch("stores/:id/status")
@@ -158,6 +109,7 @@ export class AdminController {
         @Body() body: { status: string; reason?: string },
       ) {
         const user = req.user;
+    requireUser(user);
         this.requirePlatformAdmin(user);
         const result = await this.storesAdmin.setStatus(id, null, body.status, body.reason, user.sub);
         if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
@@ -168,6 +120,7 @@ export class AdminController {
       @Get("stores/:id/summary")
       async storeSummary(@Req() req: Request & { user?: AuthPrincipal }, @Param("id") id: string) {
         const user = req.user;
+    requireUser(user);
         this.requirePlatformAdmin(user);
         return { ...(await this.storesAdmin.getDataSummary(id)), storeId: id };
       }
@@ -180,6 +133,7 @@ export class AdminController {
         @Headers("authorization") authHeader?: string,
       ) {
         const user = req.user;
+    requireUser(user);
         this.requirePlatformAdmin(user);
         const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : "";
         return { ...(await this.storesAdmin.isolationProbe(id, token)), storeId: id };
@@ -192,20 +146,20 @@ export class AdminController {
    * Unknown store → 404 (no enumeration); anyone else → 403.
    */
   private async requireStoreManager(user: AuthPrincipal | undefined, storeId: string): Promise<void> {
-    requireAdmin(user);
-    const store = await prisma.store.findUnique({ where: { id: storeId }, select: { id: true } });
-    if (!store) throw new HttpException({ type: "not_found", message: "Store not found" }, HttpStatus.NOT_FOUND);
-    if (user.role === "PLATFORM_ADMIN") return;
-    const m = await prisma.userStore.findUnique({ where: { userId_storeId: { userId: user.sub, storeId } } });
-    if (m && m.status === "ACTIVE" && m.role === "OWNER") return;
-    throw new HttpException({ type: "forbidden", message: "Platform admin or store owner only" }, HttpStatus.FORBIDDEN);
-  }
+      if (!user) throw new HttpException({ type: "unauthorized", message: "Not authenticated" }, HttpStatus.UNAUTHORIZED);
+      const store = await prisma.store.findUnique({ where: { id: storeId }, select: { id: true } });
+      if (!store) throw new HttpException({ type: "not_found", message: "Store not found" }, HttpStatus.NOT_FOUND);
+      if (user.role === "PLATFORM_ADMIN") return;
+      const m = await prisma.userStore.findUnique({ where: { userId_storeId: { userId: user.sub, storeId } } });
+      if (m && m.status === "ACTIVE" && m.role === "OWNER") return;
+      throw new HttpException({ type: "forbidden", message: "Platform admin or store owner only" }, HttpStatus.FORBIDDEN);
+    }
 
   /** B1 — GET /admin/stores/:id/users — members directory for a store. */
   @Get("stores/:id/users")
   async storeUsers(@Req() req: Request & { user?: AuthPrincipal }, @Param("id") storeId: string) {
     const user = req.user;
-    requireAdmin(user);
+    requireUser(user);
     await this.requireStoreManager(user, storeId);
     const rows = await prisma.userStore.findMany({
       where: { storeId },
@@ -235,7 +189,7 @@ export class AdminController {
         @Body() body: { email: string; name?: string; role?: string },
       ) {
         const user = req.user;
-        requireAdmin(user);
+    requireUser(user);
         await this.requireStoreManager(user, storeId);
         const result = await this.team.invite(storeId, body?.email ?? "", body?.name ?? null, body?.role ?? "STAFF");
         if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
@@ -251,7 +205,7 @@ export class AdminController {
     @Body() body: { role: string },
   ) {
     const user = req.user;
-    requireAdmin(user);
+    requireUser(user);
     await this.requireStoreManager(user, storeId);
     if (userId === user.sub) {
       throw new HttpException({ type: "forbidden", message: "Cannot change your own membership role" }, HttpStatus.FORBIDDEN);
@@ -274,7 +228,7 @@ export class AdminController {
       @Body() body: { newPassword?: string },
     ) {
       const user = req.user;
-      requireAdmin(user);
+    requireUser(user);
       // Access rule (operator decision 2026-09-08): platform admin may reset ONLY the
       // store's OWNER account. The store's owner resets their own team via /admin/team/... 
       if (user.role === "PLATFORM_ADMIN") {
@@ -326,6 +280,7 @@ export class AdminController {
     @Body() body: { email?: string; name?: string | null },
   ) {
     const user = req.user;
+    requireUser(user);
     if (!user) throw new HttpException({ type: "unauthorized", message: "Not authenticated" }, HttpStatus.UNAUTHORIZED);
     const result = await this.auth.updateProfile({
       userId: user.sub,
@@ -345,7 +300,7 @@ export class AdminController {
     @Body() body: { status: "ACTIVE" | "DEACTIVATED" },
   ) {
     const user = req.user;
-    requireAdmin(user);
+    requireUser(user);
     await this.requireStoreManager(user, storeId);
     if (body.status !== "ACTIVE" && body.status !== "DEACTIVATED") {
       throw new HttpException({ type: "validation", errors: ["status must be ACTIVE or DEACTIVATED"] }, HttpStatus.UNPROCESSABLE_ENTITY);
@@ -359,8 +314,8 @@ export class AdminController {
   @Get("stores")
   async listStores(@Req() req: Request & { user?: AuthPrincipal }) {
     const user = req.user;
-    requireAdmin(user);
-    if (user.role !== "PLATFORM_ADMIN") {
+        requireUser(user);
+        if (user.role !== "PLATFORM_ADMIN") {
       throw new HttpException({ type: "forbidden", message: "Platform admin only" }, HttpStatus.FORBIDDEN);
     }
     return { stores: await this.storesAdmin.listAll() };
@@ -373,8 +328,8 @@ export class AdminController {
     @Body() body: { name: string; slug: string; currencyCode?: string; timezone?: string; ownerEmail: string },
   ) {
     const user = req.user;
-    requireAdmin(user);
-    if (user.role !== "PLATFORM_ADMIN") {
+        requireUser(user);
+        if (user.role !== "PLATFORM_ADMIN") {
       throw new HttpException({ type: "forbidden", message: "Platform admin only" }, HttpStatus.FORBIDDEN);
     }
     const result = await this.storesAdmin.create(body);
@@ -396,8 +351,8 @@ export class AdminController {
       @Headers("x-store-id") headerStoreId?: string,
     ) {
       const user = req.user;
-          requireView(user);
-          const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+          const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.VIEW);
           // Date hardening: non-parseable dates → 422 (never 500).
           for (const [key, val] of [["from", from], ["to", to]] as const) {
             if (val !== undefined && Number.isNaN(Date.parse(val))) {
@@ -450,8 +405,8 @@ export class AdminController {
                     @Get("orders/counts")
                     async orderCounts(@Req() req: Request & { user?: AuthPrincipal }, @Query("status") status?: string, @Query("from") from?: string, @Query("to") to?: string, @Query("customer") customer?: string, @Query("source") source?: string, @Query("payment") payment?: string, @Query("fulfillment") fulfillment?: string, @Headers("x-store-id") headerStoreId?: string) {
                                           const user = req.user;
-                                          requireView(user);
-                                          const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+                                          const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.VIEW);
                                           for (const [key, val] of [["from", from], ["to", to]] as const) {
                                             if (val !== undefined && Number.isNaN(Date.parse(val))) {
                                               throw new HttpException({ type: "validation", errors: [`${key} must be an ISO date`] }, HttpStatus.UNPROCESSABLE_ENTITY);
@@ -492,8 +447,8 @@ export class AdminController {
   @Get("orders/:id")
   async orderDetail(@Req() req: Request & { user?: AuthPrincipal }, @Param("id") id: string, @Headers("x-store-id") headerStoreId?: string) {
     const user = req.user;
-    requireView(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.VIEW);
     const detail = await this.ordersAdmin.detail(storeId, id);
     if (!detail) throw new HttpException({ type: "not_found", message: "Order not found" }, HttpStatus.NOT_FOUND);
     return detail;
@@ -508,20 +463,21 @@ export class AdminController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    requireView(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
-    // Role-based transition permissions: sales agents may only move delivery states.
-    const AGENT_ALLOWED = ["OUT_FOR_DELIVERY", "DELIVERED", "FAILED_DELIVERY"];
-    if (user.role === "SALES_AGENT" && !AGENT_ALLOWED.includes(body.toStatus)) {
-      throw new HttpException(
-        { type: "forbidden", message: "Sales agents may only update delivery states" },
-        HttpStatus.FORBIDDEN,
-      );
-    }
-    const result = await this.ordersAdmin.transition(storeId, id, body.toStatus, body.reason, {
-      type: user.role,
-      id: user.sub,
-    });
+    requireUser(user);
+        const ctx = await resolveTenant(user, headerStoreId, TENANT_ROLES.VIEW);
+        const storeId = ctx.storeId;
+        // Role-based transition permissions: sales agents may only move delivery states.
+        const AGENT_ALLOWED = ["OUT_FOR_DELIVERY", "DELIVERED", "FAILED_DELIVERY"];
+        if (ctx.role === "SALES_AGENT" && !AGENT_ALLOWED.includes(body.toStatus)) {
+          throw new HttpException(
+            { type: "forbidden", message: "Sales agents may only update delivery states" },
+            HttpStatus.FORBIDDEN,
+          );
+        }
+        const result = await this.ordersAdmin.transition(storeId, id, body.toStatus, body.reason, {
+          type: ctx.role,
+          id: user.sub,
+        });
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
     return { ...result.value, storeId };
   }
@@ -538,8 +494,8 @@ export class AdminController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-        requireAdmin(user);
-        const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+        const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
         const unfiltered = !search && !categoryId && minPrice === undefined && maxPrice === undefined && active === undefined;
         if (unfiltered) {
           const hit = cacheGet<unknown[]>(cacheKey("products", storeId));
@@ -560,8 +516,8 @@ export class AdminController {
   @Get("products/categories")
   async listCategories(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
     const user = req.user;
-    requireAdmin(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
     return { categories: await this.productsAdmin.listCategories(storeId) };
   }
 
@@ -573,8 +529,8 @@ export class AdminController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    requireAdmin(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
     const result = await this.productsAdmin.create(storeId, body);
         if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
         cacheBust(cacheKey("products", storeId));
@@ -590,8 +546,8 @@ export class AdminController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    requireAdmin(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
     const result = await this.productsAdmin.update(storeId, id, body);
         if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
         cacheBust(cacheKey("products", storeId));
@@ -602,8 +558,8 @@ export class AdminController {
   @Delete("products/:id")
   async removeProduct(@Req() req: Request & { user?: AuthPrincipal }, @Param("id") id: string, @Headers("x-store-id") headerStoreId?: string) {
     const user = req.user;
-    requireAdmin(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
     const result = await this.productsAdmin.remove(storeId, id);
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
     return result.value;
@@ -613,8 +569,8 @@ export class AdminController {
   @Get("settings")
   async getSettings(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
     const user = req.user;
-        requireAdmin(user);
-        const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+        const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
         const hit = cacheGet<unknown>(cacheKey("settings", storeId));
         if (hit) return { ...(hit as object), storeId };
         const settings = await this.settingsAdmin.get(storeId);
@@ -635,8 +591,8 @@ export class AdminController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    requireAdmin(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
     const result = await this.settingsAdmin.update(storeId, body);
         if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
         cacheBust(cacheKey("settings", storeId));
@@ -651,8 +607,8 @@ export class AdminController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    requireManage(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.MANAGE);
     const result = await this.settingsAdmin.updateLink(storeId, body);
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
     return { ...result.value, storeId };
@@ -662,8 +618,8 @@ export class AdminController {
   @Get("vouchers")
   async listVouchers(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
     const user = req.user;
-    requireAdmin(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
     return { vouchers: await this.vouchersAdmin.list(storeId), storeId };
   }
 
@@ -675,8 +631,8 @@ export class AdminController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    requireAdmin(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
     const result = await this.vouchersAdmin.create(storeId, {
       code: body.code,
       discountMinor: body.discountMinor,
@@ -699,8 +655,8 @@ export class AdminController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    requireAdmin(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
     const result = await this.vouchersAdmin.update(storeId, id, body);
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
     return result.value;
@@ -716,8 +672,8 @@ export class AdminController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    requireAdmin(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
     const customers = await this.loyalty.adminCustomers(storeId, {
       search,
       approvalStatus,
@@ -750,8 +706,8 @@ export class AdminController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    requireAdmin(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
     const result = await this.loyalty.createCustomer(storeId, body);
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
     return { ...result.value, storeId };
@@ -761,8 +717,8 @@ export class AdminController {
   @Get("customers/export.csv")
   async exportCustomersCsv(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string, @Res() res?: any) {
     const user = req.user;
-    requireAdmin(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
     const customers = await this.loyalty.adminCustomers(storeId, {});
     const rows = customers.map((sc) => ({
       name: sc.customer.name ?? "",
@@ -790,8 +746,8 @@ export class AdminController {
   @Get("customers/:id")
   async customerProfile(@Req() req: Request & { user?: AuthPrincipal }, @Param("id") id: string, @Headers("x-store-id") headerStoreId?: string) {
     const user = req.user;
-    requireAdmin(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
     const profile = await this.loyalty.adminCustomerProfile(storeId, id);
     if (!profile) throw new HttpException({ type: "not_found", message: "Customer not found" }, HttpStatus.NOT_FOUND);
     return profile;
@@ -801,8 +757,8 @@ export class AdminController {
   @Get("customers/:id/loyalty")
   async customerLoyalty(@Req() req: Request & { user?: AuthPrincipal }, @Param("id") id: string, @Headers("x-store-id") headerStoreId?: string) {
     const user = req.user;
-    requireAdmin(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
     const sc = await prisma.storeCustomer.findFirst({ where: { id, storeId } });
     if (!sc) throw new HttpException({ type: "not_found", message: "Customer not found" }, HttpStatus.NOT_FOUND);
     const ledger = await this.loyalty.customerLedger(storeId, sc.customerId);
@@ -818,8 +774,8 @@ export class AdminController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    requireAdmin(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
     const result = await this.loyalty.updateCustomer(storeId, id, body);
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
     return { ...result.value, storeId };
@@ -834,8 +790,8 @@ export class AdminController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    requireAdmin(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
     const result = await this.loyalty.adjustPoints(storeId, id, body.delta, body.note);
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
     return result.value;
@@ -850,8 +806,8 @@ export class AdminController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    requireView(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.VIEW);
     const result = await this.ordersAdmin.replaceOrderItems(storeId, id, body?.items ?? []);
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
     return { ...result.value, storeId };
@@ -861,8 +817,8 @@ export class AdminController {
   @Post("orders/:id/send-for-delivery")
   async orderSendForDelivery(@Req() req: Request & { user?: AuthPrincipal }, @Param("id") id: string, @Headers("x-store-id") headerStoreId?: string) {
     const user = req.user;
-    requireView(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.VIEW);
     const result = await this.ordersAdmin.sendForDelivery(storeId, id);
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
     return { ...result.value, storeId };
@@ -872,8 +828,8 @@ export class AdminController {
   @Post("orders/:id/complete-now")
   async orderCompleteNow(@Req() req: Request & { user?: AuthPrincipal }, @Param("id") id: string, @Headers("x-store-id") headerStoreId?: string) {
     const user = req.user;
-    requireView(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.VIEW);
     const result = await this.ordersAdmin.completeNow(storeId, id);
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
     return { ...result.value, storeId };
@@ -883,8 +839,8 @@ export class AdminController {
   @Get("analytics/summary")
   async analyticsSummary(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
     const user = req.user;
-    requireAdmin(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
     return { ...(await this.analytics.summary(storeId)), storeId };
   }
 
@@ -892,8 +848,8 @@ export class AdminController {
   @Get("analytics/status")
   async analyticsStatus(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
     const user = req.user;
-    requireAdmin(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
     return { rows: await this.analytics.statusBreakdown(storeId), storeId };
   }
 
@@ -901,8 +857,8 @@ export class AdminController {
   @Get("analytics/daily")
   async analyticsDaily(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string, @Headers("days") days?: string) {
     const user = req.user;
-    requireAdmin(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
     const n = Math.min(Math.max(parseInt(days ?? "14", 10) || 14, 3), 90);
     return { ...(await this.analytics.dailyRevenue(storeId, n)), storeId };
   }
@@ -911,8 +867,8 @@ export class AdminController {
   @Get("analytics/products")
   async analyticsProducts(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
     const user = req.user;
-    requireAdmin(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
     return { products: await this.analytics.topProducts(storeId), storeId };
   }
 
@@ -920,8 +876,8 @@ export class AdminController {
   @Get("analytics/vouchers")
   async analyticsVouchers(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
     const user = req.user;
-    requireAdmin(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
     return { vouchers: await this.analytics.voucherUsage(storeId), storeId };
   }
 
@@ -929,8 +885,8 @@ export class AdminController {
   @Get("maintenance/stats")
   async maintenanceStats(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
     const user = req.user;
-    requireAdmin(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
     const [openCarts, expiredCarts, orders] = await Promise.all([
       prisma.cart.count({ where: { storeId, status: "OPEN" } }),
       prisma.cart.count({ where: { storeId, status: "OPEN", expiresAt: { lt: new Date() } } }),
@@ -943,8 +899,8 @@ export class AdminController {
   @Post("maintenance/sweep-expired-carts")
   async sweepExpiredCarts(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
     const user = req.user;
-    requireAdmin(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
     const result = await prisma.cart.updateMany({
       where: { storeId, status: "OPEN", expiresAt: { lt: new Date() } },
       data: { status: "ABANDONED" },
@@ -958,8 +914,8 @@ export class AdminController {
   @Get("warehouses")
   async listWarehouses(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
     const user = req.user;
-    requireAdmin(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
     return { warehouses: await this.warehouses.list(storeId), storeId };
   }
 
@@ -971,8 +927,8 @@ export class AdminController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    requireAdmin(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
     const result = await this.warehouses.create(storeId, body.name);
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
     return result.value;
@@ -987,8 +943,8 @@ export class AdminController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    requireAdmin(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
     const result = await this.warehouses.setStock(storeId, id, body.productId, body.quantityOnHand);
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
     return result.value;
@@ -1002,8 +958,8 @@ export class AdminController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    requireAdmin(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
     const result = await this.warehouses.requestTransfer(storeId, body.fromWarehouseId, body.toWarehouseId, body.productId, body.quantity, user.sub, body.reason);
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
     return result.value;
@@ -1017,8 +973,8 @@ export class AdminController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    requireManage(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.MANAGE);
     const result = await this.warehouses.approveTransfer(storeId, id, user.sub);
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
     return result.value;
@@ -1032,8 +988,8 @@ export class AdminController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    requireManage(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.MANAGE);
     const result = await this.warehouses.completeTransfer(storeId, id);
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
     return result.value;
@@ -1043,8 +999,8 @@ export class AdminController {
   @Get("transfers")
   async listTransfers(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
     const user = req.user;
-    requireView(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.VIEW);
     return { transfers: await this.warehouses.listTransfers(storeId), storeId };
   }
 
@@ -1054,9 +1010,9 @@ export class AdminController {
   @Get("team")
   async listTeam(@Req() req: Request & { user?: AuthPrincipal }, @Headers("x-store-id") headerStoreId?: string) {
     const user = req.user;
-    requireView(user); // everyone in the store can see who's on the team
-    const storeId = await this.resolveStoreId(user, headerStoreId);
-    return { members: await this.team.list(storeId), storeId };
+        requireUser(user);
+        const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.VIEW); // everyone in the store can see who's on the team
+        return { members: await this.team.list(storeId), storeId };
   }
 
   /** POST /admin/team/invite — invite MANAGER / STAFF / SALES_AGENT. */
@@ -1067,8 +1023,8 @@ export class AdminController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    requireManage(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.MANAGE);
     const result = await this.team.invite(storeId, body.email, body.name ?? null, body.role);
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
     return result.value;
@@ -1083,8 +1039,8 @@ export class AdminController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    requireManage(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.MANAGE);
     const result = await this.team.changeRole(storeId, userId, body.role);
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
     return result.value;
@@ -1099,8 +1055,8 @@ export class AdminController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    requireAdmin(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
     // OWNER (or platform) of this store only — same rule as stores/:id reset, team-scoped.
     await this.requireStoreManager(user, storeId);
     if (user.sub === userId) {
@@ -1126,8 +1082,8 @@ export class AdminController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    requireManage(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.MANAGE);
     const result = await this.team.deactivate(storeId, userId);
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
     return result.value;
@@ -1144,19 +1100,20 @@ export class AdminController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    requireAdmin(user);
-    const storeId = await this.resolveStoreId(user, headerStoreId);
-    const sc = await prisma.storeCustomer.findFirst({ where: { id, storeId } });
-    if (!sc) throw new HttpException({ type: "not_found", message: "Customer not found" }, HttpStatus.NOT_FOUND);
+    requireUser(user);
+        const ctx = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
+        const storeId = ctx.storeId;
+        const sc = await prisma.storeCustomer.findFirst({ where: { id, storeId } });
+        if (!sc) throw new HttpException({ type: "not_found", message: "Customer not found" }, HttpStatus.NOT_FOUND);
 
-    const updated = await prisma.storeCustomer.update({
-      where: { id },
-      data: { approvalStatus: body.status },
-    });
-    await prisma.auditLog.create({
-      data: {
-        storeId,
-        actorType: user.role,
+        const updated = await prisma.storeCustomer.update({
+          where: { id },
+          data: { approvalStatus: body.status },
+        });
+        await prisma.auditLog.create({
+          data: {
+            storeId,
+            actorType: ctx.role,
         actorId: user.sub,
         action: "CUSTOMER_APPROVAL",
         entityType: "StoreCustomer",

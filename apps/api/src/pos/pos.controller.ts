@@ -1,10 +1,9 @@
 import { Body, Controller, Get, Headers, HttpException, HttpStatus, Inject, Param, Patch, Post, Query, Req, UseGuards } from "@nestjs/common";
 import type { ApiError, PosSellRequest, PosHoldRequest, PosHoldItemsRequest, PosHoldCompleteRequest, PreOrderCreateRequest, PreOrderFinalizeRequest } from "@sam-store/contracts";
 import { JwtAuthGuard, type AuthPrincipal } from "../auth/auth.guard.js";
+import { resolveTenant, TENANT_ROLES } from "../auth/tenant-context.js";
 import { prisma } from "../persistence/prisma-repositories.js";
 import { POS_SERVICE, PosService } from "./pos.service.js";
-
-const ADMIN_ROLES = ["STORE_OWNER", "PLATFORM_ADMIN", "MANAGER", "STAFF"];
 
 function statusFor(error: ApiError): HttpStatus {
   switch (error.type) {
@@ -25,26 +24,11 @@ export class PosController {
   constructor(@Inject(POS_SERVICE) private readonly pos: PosService) {}
 
   private async guardAndStore(req: Request & { user?: AuthPrincipal }, headerStoreId?: string): Promise<string> {
-    const user = req.user;
-    if (!user) throw new HttpException({ type: "unauthorized", message: "Not authenticated" }, HttpStatus.UNAUTHORIZED);
-    if (!ADMIN_ROLES.includes(user.role)) {
-      throw new HttpException({ type: "forbidden", message: "Not authorized" }, HttpStatus.FORBIDDEN);
+      // Per-store active membership role (OWNER/MANAGER/STAFF or platform bypass);
+      // a user with no ACTIVE membership is denied — no demo-store fallback.
+      const { storeId } = await resolveTenant(req.user, headerStoreId, TENANT_ROLES.ADMIN);
+      return storeId;
     }
-    if (user.role === "PLATFORM_ADMIN") {
-      return headerStoreId || (await prisma.userStore.findFirst({ where: { userId: user.sub, status: "ACTIVE" } }))?.storeId || "cmtifdks2000094ic1j9w8th7";
-    }
-    if (headerStoreId) {
-      const m = await prisma.userStore.findUnique({ where: { userId_storeId: { userId: user.sub, storeId: headerStoreId } } });
-      if (!m || m.status !== "ACTIVE") throw new HttpException({ type: "forbidden", message: "Not a member of that store" }, HttpStatus.FORBIDDEN);
-      return headerStoreId;
-    }
-    const m = user.storeId
-      ? await prisma.userStore.findUnique({ where: { userId_storeId: { userId: user.sub, storeId: user.storeId } } })
-      : null;
-    return m?.status === "ACTIVE" ? m.storeId
-      : (await prisma.userStore.findFirst({ where: { userId: user.sub, status: "ACTIVE" } }))?.storeId
-      ?? "cmtifdks2000094ic1j9w8th7";
-  }
 
   /** POST /admin/pos/sell — immediate cash/utang sale (V1: tendered + change, credit dates). */
   @Post("sell")

@@ -3,12 +3,10 @@ import {
 } from "@nestjs/common";
 import type { ApiError } from "@sam-store/contracts";
 import { JwtAuthGuard, type AuthPrincipal } from "../auth/auth.guard.js";
+import { requireUser, resolveTenant, TENANT_ROLES } from "../auth/tenant-context.js";
 import { prisma } from "../persistence/prisma-repositories.js";
 import { cacheBust, cacheKey } from "../persistence/ttl-cache.js";
 import { PAYMENTS_SERVICE, PaymentsService } from "./payments.service.js";
-
-const ADMIN_ROLES = ["STORE_OWNER", "PLATFORM_ADMIN", "MANAGER", "STAFF"];
-const MANAGE_ROLES = ["STORE_OWNER", "PLATFORM_ADMIN", "MANAGER"];
 
 function statusFor(error: ApiError): HttpStatus {
   switch (error.type) {
@@ -28,22 +26,6 @@ function statusFor(error: ApiError): HttpStatus {
 export class PaymentsController {
   constructor(@Inject(PAYMENTS_SERVICE) private readonly paymentsSvc: PaymentsService) {}
 
-  private async resolveStore(user: AuthPrincipal, header?: string): Promise<string> {
-    if (user.role === "PLATFORM_ADMIN") {
-      return header || (await prisma.userStore.findFirst({ where: { userId: user.sub, status: "ACTIVE" } }))?.storeId || "cmtifdks2000094ic1j9w8th7";
-    }
-    if (header) {
-      const m = await prisma.userStore.findUnique({ where: { userId_storeId: { userId: user.sub, storeId: header } } });
-      if (m?.status === "ACTIVE") return header;
-      throw new HttpException({ type: "forbidden", message: "Not a member of that store" }, HttpStatus.FORBIDDEN);
-    }
-    if (user.storeId) {
-      const m = await prisma.userStore.findUnique({ where: { userId_storeId: { userId: user.sub, storeId: user.storeId } } });
-      if (m?.status === "ACTIVE") return user.storeId;
-    }
-    return (await prisma.userStore.findFirst({ where: { userId: user.sub, status: "ACTIVE" } }))?.storeId ?? "cmtifdks2000094ic1j9w8th7";
-  }
-
   /** POST /admin/orders/:id/payments — record a payment on an order. */
   @Post("orders/:id/payments")
   async recordPayment(
@@ -53,8 +35,8 @@ export class PaymentsController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    if (!user || !ADMIN_ROLES.includes(user.role)) throw new HttpException({ type: "forbidden", message: "Not authorized" }, HttpStatus.FORBIDDEN);
-    const storeId = await this.resolveStore(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
     const result = await this.paymentsSvc.recordPayment({ orderId: id, storeId, method: body.method, amountMinor: body.amountMinor, changeMinor: body.changeMinor, note: body.note, createdBy: user.sub });
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
     return result.value;
@@ -64,8 +46,8 @@ export class PaymentsController {
   @Get("orders/:id/receipt")
   async receipt(@Req() req: Request & { user?: AuthPrincipal }, @Param("id") id: string, @Headers("x-store-id") headerStoreId?: string) {
     const user = req.user;
-    if (!user || !ADMIN_ROLES.includes(user.role)) throw new HttpException({ type: "forbidden", message: "Not authorized" }, HttpStatus.FORBIDDEN);
-    const storeId = await this.resolveStore(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
     const receipt = await this.paymentsSvc.receipt(id, storeId);
     if (!receipt) throw new HttpException({ type: "not_found", message: "Order not found" }, HttpStatus.NOT_FOUND);
     return receipt;
@@ -75,8 +57,8 @@ export class PaymentsController {
   @Get("orders/:id/payments")
   async payments(@Req() req: Request & { user?: AuthPrincipal }, @Param("id") id: string, @Headers("x-store-id") headerStoreId?: string) {
     const user = req.user;
-    if (!user || !ADMIN_ROLES.includes(user.role)) throw new HttpException({ type: "forbidden", message: "Not authorized" }, HttpStatus.FORBIDDEN);
-    const storeId = await this.resolveStore(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
     const rows = await this.paymentsSvc.paymentsFor(id, storeId);
     if (!rows) throw new HttpException({ type: "not_found", message: "Order not found" }, HttpStatus.NOT_FOUND);
     return { payments: rows };
@@ -91,8 +73,8 @@ export class PaymentsController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    if (!user || !MANAGE_ROLES.includes(user.role)) throw new HttpException({ type: "forbidden", message: "Owner/manager only" }, HttpStatus.FORBIDDEN);
-    const storeId = await this.resolveStore(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.OWNER_MANAGER);
     cacheBust(cacheKey("orders", storeId));
     const result = await this.paymentsSvc.voidOrder(id, storeId, user.sub, body.reason);
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
@@ -108,8 +90,8 @@ export class PaymentsController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    if (!user || !MANAGE_ROLES.includes(user.role)) throw new HttpException({ type: "forbidden", message: "Owner/manager only" }, HttpStatus.FORBIDDEN);
-    const storeId = await this.resolveStore(user, headerStoreId);
+    requireUser(user);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.OWNER_MANAGER);
     cacheBust(cacheKey("orders", storeId));
     const result = await this.paymentsSvc.refundOrder(id, storeId, user.sub, body.amountMinor, body.reason);
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));

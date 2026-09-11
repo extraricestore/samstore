@@ -3,11 +3,9 @@ import {
 } from "@nestjs/common";
 import type { ApiError } from "@sam-store/contracts";
 import { JwtAuthGuard, type AuthPrincipal } from "../auth/auth.guard.js";
+import { requireUser, resolveTenant, TENANT_ROLES } from "../auth/tenant-context.js";
 import { prisma } from "../persistence/prisma-repositories.js";
 import { CREDIT_SERVICE, CreditService } from "./credit.service.js";
-
-const MANAGE_ROLES = ["STORE_OWNER", "PLATFORM_ADMIN", "MANAGER"];
-const ADMIN_ROLES = ["STORE_OWNER", "PLATFORM_ADMIN", "MANAGER", "STAFF", "SALES_AGENT"];
 
 function statusFor(error: ApiError): HttpStatus {
   switch (error.type) {
@@ -38,22 +36,6 @@ function parseDateBound(value: string | undefined, name: string, endOfDay = fals
 export class CreditController {
   constructor(@Inject(CREDIT_SERVICE) private readonly creditSvc: CreditService) {}
 
-  private async resolveStore(user: AuthPrincipal, header?: string): Promise<string> {
-    if (user.role === "PLATFORM_ADMIN") {
-      return header || (await prisma.userStore.findFirst({ where: { userId: user.sub, status: "ACTIVE" } }))?.storeId || "cmtifdks2000094ic1j9w8th7";
-    }
-    if (header) {
-      const m = await prisma.userStore.findUnique({ where: { userId_storeId: { userId: user.sub, storeId: header } } });
-      if (m?.status === "ACTIVE") return header;
-      throw new HttpException({ type: "forbidden", message: "Not a member of that store" }, HttpStatus.FORBIDDEN);
-    }
-    if (user.storeId) {
-      const m = await prisma.userStore.findUnique({ where: { userId_storeId: { userId: user.sub, storeId: user.storeId } } });
-      if (m?.status === "ACTIVE") return user.storeId;
-    }
-    return (await prisma.userStore.findFirst({ where: { userId: user.sub, status: "ACTIVE" } }))?.storeId ?? "cmtifdks2000094ic1j9w8th7";
-  }
-
   /** PATCH /admin/credit/:storeCustomerId/approve — approve customer for utang with a limit. */
   @Patch("credit/:storeCustomerId/approve")
   async approveCredit(
@@ -63,8 +45,8 @@ export class CreditController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    if (!user || !MANAGE_ROLES.includes(user.role)) throw new HttpException({ type: "forbidden", message: "Owner/manager only" }, HttpStatus.FORBIDDEN);
-    const storeId = await this.resolveStore(user, headerStoreId);
+        requireUser(user);
+        const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.OWNER_MANAGER);
     const result = await this.creditSvc.approveCredit(storeId, storeCustomerId, body.limitMinor, user.sub);
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
     return result.value;
@@ -81,8 +63,8 @@ export class CreditController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    if (!user || !ADMIN_ROLES.includes(user.role)) throw new HttpException({ type: "forbidden", message: "Not authorized" }, HttpStatus.FORBIDDEN);
-    const storeId = await this.resolveStore(user, headerStoreId);
+        requireUser(user);
+        const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.VIEW);
     const s = status === "paid" ? "paid" : "unpaid";
     const filters = {
       search,
@@ -102,8 +84,8 @@ export class CreditController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    if (!user || !ADMIN_ROLES.includes(user.role)) throw new HttpException({ type: "forbidden", message: "Not authorized" }, HttpStatus.FORBIDDEN);
-    const storeId = await this.resolveStore(user, headerStoreId);
+        requireUser(user);
+        const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.VIEW);
     const data = await this.creditSvc.customerCredit(storeId, storeCustomerId, {
       from: parseDateBound(from, "from"),
       to: parseDateBound(to, "to", true),
@@ -121,8 +103,8 @@ export class CreditController {
     @Headers("x-store-id") headerStoreId?: string,
   ) {
     const user = req.user;
-    if (!user || !ADMIN_ROLES.includes(user.role)) throw new HttpException({ type: "forbidden", message: "Not authorized" }, HttpStatus.FORBIDDEN);
-    const storeId = await this.resolveStore(user, headerStoreId);
+        requireUser(user);
+        const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.VIEW);
     const result = await this.creditSvc.recordPayment(storeId, storeCustomerId, body.amountMinor, body.note, user.sub, body.signatureData);
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
     return result.value;
