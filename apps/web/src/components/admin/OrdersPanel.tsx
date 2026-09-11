@@ -115,6 +115,21 @@ export default function OrdersPanel() {
     const [deliveryConfirm, setDeliveryConfirm] = useState<{ id: string; orderNumber: string; totalMinor: number; method: string } | null>(null);
   const [customers, setCustomers] = useState<{ id: string; name: string | null }[]>([]);
 
+  // M10 a11y: Escape closes the open modal; each modal declares its close callback here.
+  const modalClose = () => {
+    if (payHold) setPayHold(null);
+    else if (deliveryConfirm) setDeliveryConfirm(null);
+    else if (pendingReason) setPendingReason(null);
+    else if (confirmAction) setConfirmAction(null);
+    else if (editHold) setEditHold(null);
+    else if (orderDetail) setOrderDetail(null);
+  };
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => { if (e.key === "Escape") modalClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -782,15 +797,15 @@ export default function OrdersPanel() {
       )}
 
       {/* Pay held order modal */}
-      {payHold && (
-        <>
-          <div className="modal fade show d-block" tabIndex={-1}>
-            <div className="modal-dialog modal-dialog-centered">
-              <div className="modal-content">
-                <div className="modal-header">
-                  <h5 className="modal-title">Complete {payHold.orderNumber} · {toPesos(payHold.totalMinor)}</h5>
-                  <button type="button" className="btn-close" onClick={() => setPayHold(null)}></button>
-                </div>
+            {payHold && (
+              <>
+                <div className="modal fade show d-block" tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="payHoldModalTitle">
+                  <div className="modal-dialog modal-dialog-centered">
+                    <div className="modal-content">
+                      <div className="modal-header">
+                        <h5 className="modal-title" id="payHoldModalTitle">Complete {payHold.orderNumber} · {toPesos(payHold.totalMinor)}</h5>
+                        <button type="button" className="btn-close" aria-label="Close" onClick={() => setPayHold(null)}></button>
+                      </div>
                 <div className="modal-body">
                   <div className="d-flex gap-2 mb-2">
                     <button type="button" className={`btn btn-sm ${payMethod === "cash" ? "btn-success" : "btn-outline-success"} flex-fill`} onClick={() => setPayMethod("cash")}>Cash</button>
@@ -841,14 +856,14 @@ export default function OrdersPanel() {
 
             {/* Delivery confirm — payment collected on a delivery order: ask "for delivery?" then confirm */}
             {deliveryConfirm && (
-              <>
-                <div className="modal fade show d-block" tabIndex={-1}>
-                  <div className="modal-dialog modal-dialog-centered">
-                    <div className="modal-content">
-                      <div className="modal-header">
-                        <h5 className="modal-title"><i className="bi bi-truck me-1"></i>Delivery for {deliveryConfirm.orderNumber}</h5>
-                        <button type="button" className="btn-close" onClick={() => setDeliveryConfirm(null)}></button>
-                      </div>
+                          <>
+                            <div className="modal fade show d-block" tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby="deliveryConfirmModalTitle">
+                              <div className="modal-dialog modal-dialog-centered">
+                                <div className="modal-content">
+                                  <div className="modal-header">
+                                    <h5 className="modal-title" id="deliveryConfirmModalTitle"><i className="bi bi-truck me-1"></i>Delivery for {deliveryConfirm.orderNumber}</h5>
+                                    <button type="button" className="btn-close" aria-label="Close" onClick={() => setDeliveryConfirm(null)}></button>
+                                  </div>
                       <div className="modal-body">
                         <p className="small">
                           Payment collected: <strong>{deliveryConfirm.method === "cash" ? "Cash" : "Utang (credit)"}</strong> · {toPesos(deliveryConfirm.totalMinor)}
