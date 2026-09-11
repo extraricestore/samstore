@@ -294,24 +294,46 @@ export class CheckoutService {
       storeCustomerId,
       createdAt: new Date(),
     };
-    const created = await this.orders.create(order);
-
-    // 9. Cart is spent
-    await this.carts.save({ ...cart, status: "CONVERTED" });
-
-    // 9b. Record voucher redemption (after the order exists — a failed checkout never consumes it).
-    if (voucherId) {
-      await this.voucher!.redeem(created.id, store.id, voucherId);
-    }
-
-    // 9c. Record loyalty redemption (after order exists).
-    if (loyaltyPoints > 0 && customerId && storeCustomerId && this.loyalty) {
-      await this.loyalty.recordRedemption(created.id, store.id, customerId, storeCustomerId, loyaltyPoints);
-    }
-
-    // 9d. Credit purchase → ledger entry (after order exists).
-    if (paymentMethod === "credit" && storeCustomerId && this.credit) {
-      await this.credit.record(created.id, store.id, storeCustomerId, finalTotal);
+    let created: OrderRecord;
+    if (this.orders.createAtomic) {
+      // Module 5: order + stock reserve + cart conversion + voucher/loyalty/credit
+      // writes all commit in ONE database transaction — no partial outcomes.
+      try {
+        created = await this.orders.createAtomic(order, {
+          cart: { token: cart.token, storeId: cart.storeId },
+          stockReservations: items.map((i) => ({ productId: i.productId ?? "", quantity: i.quantity })),
+          ...(voucherId ? { voucherRedemption: { voucherId } } : {}),
+          ...(loyaltyPoints > 0 && customerId && storeCustomerId
+            ? { loyalty: { customerId, storeCustomerId, points: loyaltyPoints } }
+            : {}),
+          ...(paymentMethod === "credit" && storeCustomerId
+            ? { credit: { storeCustomerId, amountMinor: finalTotal } }
+            : {}),
+        });
+      } catch (e) {
+        // P2002 = unique violation on idempotencyKey from a CONCURRENT same-key
+        // request. The other request already committed — return its order.
+        if ((e as { code?: string }).code === "P2002") {
+          const existing = await this.orders.findByIdempotencyKey(canonicalKey);
+          if (existing && existing.cartToken === request.cartToken) {
+            return { ok: true, value: this.toResponse(existing) };
+          }
+        }
+        throw e;
+      }
+    } else {
+      // Legacy path (kept for repositories without the atomic primitive).
+      created = await this.orders.create(order);
+      await this.carts.save({ ...cart, status: "CONVERTED" });
+      if (voucherId) {
+        await this.voucher!.redeem(created.id, store.id, voucherId);
+      }
+      if (loyaltyPoints > 0 && customerId && storeCustomerId && this.loyalty) {
+        await this.loyalty.recordRedemption(created.id, store.id, customerId, storeCustomerId, loyaltyPoints);
+      }
+      if (paymentMethod === "credit" && storeCustomerId && this.credit) {
+        await this.credit.record(created.id, store.id, storeCustomerId, finalTotal);
+      }
     }
 
     // 10. Post-order notification hook (Messenger bridge — suppressed until a store is connected)

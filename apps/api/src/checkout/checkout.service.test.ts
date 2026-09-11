@@ -107,6 +107,72 @@ test("happy path: guest COD checkout creates an order", async () => {
   assert.equal(stored.customerName, "Maria Santos");
 });
 
+test("Module 5: checkout uses the ATOMIC path — stock reserved + cart converted in one call", async () => {
+  const { svc, carts, orders } = makeService();
+  const r = await svc.checkout(makeRequest());
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+
+  const effects = orders.atomicEffects;
+  assert.equal(effects.length, 1, "one atomic write for one checkout");
+  assert.equal(effects[0]!.cart.token, "cart-token-abc123");
+  // 2 × "prod-1" reserved
+  const reserve = effects[0]!.stockReservations.find((s) => s.productId === "prod-1");
+  assert.equal(reserve?.quantity, 2);
+
+  const cartNow = await carts.findByToken("cart-token-abc123");
+  assert.equal(cartNow?.status, "OPEN", "in-memory cart stays OPEN (conversion is the repo's atomic write)");
+  assert.equal(orders.exportedForTests().orders.length, 1);
+});
+
+test("Module 5: CONCURRENT same-key checkouts produce exactly ONE order + one atomic write", async () => {
+  const { svc, orders } = makeService();
+  const [a, b] = await Promise.all([svc.checkout(makeRequest()), svc.checkout(makeRequest())]);
+  assert.equal(a.ok, true);
+  assert.equal(b.ok, true);
+  if (!a.ok || !b.ok) return;
+  assert.equal(a.value.orderId, b.value.orderId, "both return the same order");
+  assert.equal(a.value.claimToken, b.value.claimToken, "same claim token");
+  assert.equal(orders.exportedForTests().orders.length, 1, "exactly one order persisted");
+  assert.equal(orders.atomicEffects.length, 1, "exactly one atomic write");
+});
+
+test("Module 5: voucher + loyalty + credit effects flow through the atomic call", async () => {
+  const { svc, stores, catalog, carts, orders } = makeService();
+  stores.seed(makeStore({ id: "store-2", slug: "loy-store" }));
+  catalog.seed(makeProduct({ id: "prod-loy", storeId: "store-2", priceMinor: 10000 }));
+  carts.seed(makeCart({ token: "cart-loy", storeId: "store-2", lines: [{ productId: "prod-loy", quantity: 1, unitPriceMinor: 10000 }] }));
+  const scId = "sc-1";
+  const voucher = { validate: async () => ({ ok: true as const, discountMinor: 500, voucherId: "v1" }), redeem: async () => {} };
+  const loyalty = {
+    ensureProfile: async () => ({ storeCustomerId: scId }),
+    redeem: async () => ({ ok: true as const, discountMinor: 100, storeCustomerId: scId }),
+    recordRedemption: async () => {},
+  };
+  const credit = { check: async () => ({ ok: true as const }), record: async () => {} };
+  const svc2 = new CheckoutService(stores, catalog, carts, orders, new (await import("../persistence/repositories.js")).InMemoryOrderSequenceRepository(), CLAIM_SECRET, undefined, voucher, loyalty, async () => "cust-1", credit);
+
+  const r = await svc2.checkout({
+    cartToken: "cart-loy",
+    customerName: "Loyal",
+    customerPhone: "+639176543210",
+    paymentMethod: "credit",
+    idempotencyKey: "loyal-checkout-1",
+    loyaltyPoints: 100,
+    customerToken: "cust-jwt-loyal",
+    deliveryAddressLine1: "1 Loy Address St",
+    voucherCode: "M5OFF",
+  });
+  assert.equal(r.ok, true);
+  if (!r.ok) return;
+  const fx = orders.atomicEffects[0]!;
+  assert.equal(fx.voucherRedemption.voucherId, "v1");
+  assert.equal(fx.loyalty.storeCustomerId, scId);
+  assert.equal(fx.loyalty.points, 100);
+  assert.equal(fx.credit.storeCustomerId, scId);
+  assert.ok(fx.credit.amountMinor > 0);
+});
+
 test("server recomputes totals; client-supplied values are ignored", async () => {
   const { svc } = makeService();
   const r = await svc.checkout(makeRequest());

@@ -116,8 +116,24 @@ export interface OrderSequenceRepository {
 
 export interface OrderRepository {
   create(order: OrderRecord): Promise<OrderRecord>;
+  /** Module 5: create the order AND all checkout side effects in ONE transaction. */
+  createAtomic?(order: OrderRecord, effects: AtomicCheckoutEffects): Promise<OrderRecord>;
   findByIdempotencyKey(key: string): Promise<OrderRecord | null>;
   markClaimTokenUsed(orderId: string, token: string): Promise<void>;
+}
+
+/** Module 5 — the side effects of a checkout that MUST be atomic with order creation. */
+export interface AtomicCheckoutEffects {
+  /** Convert the cart (status → CONVERTED) in the same transaction. */
+  cart?: { token: string; storeId: string };
+  /** Reserve stock: quantityReserved += qty + a RESERVE movement per level. */
+  stockReservations?: { productId: string; quantity: number }[];
+  /** Record voucher redemption (one row per (voucher, order)). */
+  voucherRedemption?: { voucherId: string };
+  /** Deduct loyalty points + write the REDEEM ledger entry. */
+  loyalty?: { customerId: string; storeCustomerId: string; points: number };
+  /** Create the credit (utang) purchase entry + increment the customer balance. */
+  credit?: { storeCustomerId: string; amountMinor: number };
 }
 
 // ─────────────────────────────── InMemory ───────────────────────────────
@@ -215,6 +231,8 @@ export class InMemoryOrderRepository implements OrderRepository {
   private orders: OrderRecord[] = [];
   private byIdem = new Map<string, OrderRecord>();
   private usedClaimTokens = new Set<string>();
+  /** Module 5: side effects recorded by createAtomic (for test asserts). */
+  atomicEffects: (Required<AtomicCheckoutEffects> & { orderNumber: string })[] = [];
 
   seed(...orders: OrderRecord[]) {
     for (const o of orders) {
@@ -228,6 +246,26 @@ export class InMemoryOrderRepository implements OrderRepository {
     this.byIdem.set(order.idempotencyKey, order);
     return order;
   }
+
+  /** Atomic checkout: records the order + all side effects in one "transaction". */
+  async createAtomic(order: OrderRecord, effects: AtomicCheckoutEffects): Promise<OrderRecord> {
+    if (this.byIdem.has(order.idempotencyKey)) {
+      // Simulated unique violation → idempotent retry returns the existing order.
+      return this.byIdem.get(order.idempotencyKey)!;
+    }
+    this.orders.push(order);
+    this.byIdem.set(order.idempotencyKey, order);
+    this.atomicEffects.push({
+      orderNumber: order.orderNumber,
+      cart: effects.cart ?? { token: "", storeId: "" },
+      stockReservations: effects.stockReservations ?? [],
+      voucherRedemption: effects.voucherRedemption ?? { voucherId: "" },
+      loyalty: effects.loyalty ?? { customerId: "", storeCustomerId: "", points: 0 },
+      credit: effects.credit ?? { storeCustomerId: "", amountMinor: 0 },
+    });
+    return order;
+  }
+
   async findByIdempotencyKey(key: string): Promise<OrderRecord | null> {
     return this.byIdem.get(key) ?? null;
   }

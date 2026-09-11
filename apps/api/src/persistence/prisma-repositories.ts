@@ -13,6 +13,7 @@ import type {
   CartRepository,
   OrderRepository,
   OrderSequenceRepository,
+  AtomicCheckoutEffects,
 } from "./repositories.js";
 import { OrderStatus, PaymentStatus } from "@prisma/client";
 
@@ -357,6 +358,147 @@ export class PrismaOrderRepository implements OrderRepository {
       ...order,
       id: created.id,
     };
+  }
+
+  /** Module 5 — checkout order + ALL side effects in ONE transaction (no partial outcomes). */
+  async createAtomic(order: OrderRecord, effects: AtomicCheckoutEffects): Promise<OrderRecord> {
+    const created = await prisma.$transaction(async (tx) => {
+      const o = await tx.order.create({
+        data: {
+          id: order.id,
+          orderNumber: order.orderNumber,
+          storeId: order.storeId,
+          status: order.status as OrderStatus,
+          currencyCode: order.currencyCode,
+          deliveryType: order.deliveryType ?? "delivery",
+          fulfillmentType: order.deliveryType === "pickup" ? "PICKUP" : "DELIVERY",
+          subtotalMinor: order.subtotalMinor,
+          deliveryFeeMinor: order.deliveryFeeMinor,
+          discountMinor: order.discountMinor,
+          totalMinor: order.totalMinor,
+          snapshot: order.snapshot as object,
+          paymentMethod: order.paymentMethod,
+          paymentStatus: order.paymentStatus as PaymentStatus,
+          idempotencyKey: order.idempotencyKey,
+          cartToken: order.cartToken,
+          customerName: order.customerName,
+          customerPhone: order.customerPhone,
+          deliveryAddressLine1: order.deliveryAddressLine1,
+          deliveryAddressLine2: order.deliveryAddressLine2,
+          landmark: order.landmark,
+          deliverySchedule: order.deliverySchedule,
+          notes: order.notes,
+          storeCustomerId: order.storeCustomerId ?? undefined,
+        },
+      });
+
+      if (order.items.length > 0) {
+        await tx.orderItem.createMany({
+          data: order.items.map((i) => ({
+            orderId: o.id,
+            storeId: order.storeId,
+            productId: i.productId,
+            productName: i.productName,
+            sku: i.sku,
+            unitPriceMinor: i.unitPriceMinor,
+            quantity: i.quantity,
+            lineTotalMinor: i.lineTotalMinor,
+          })),
+        });
+      }
+
+      await tx.orderStatusHistory.create({
+        data: { orderId: o.id, storeId: order.storeId, toStatus: order.status as OrderStatus, actorType: "system" },
+      });
+
+      if (order.claimToken) {
+        await tx.orderClaimToken.create({
+          data: { orderId: o.id, storeId: order.storeId, token: order.claimToken, expiresAt: new Date(Date.now() + CLAIM_TOKEN_TTL_DAYS * 86_400_000) },
+        });
+      }
+
+      // 1) Reserve stock (quantityReserved += qty) + RESERVE movement (ledger)
+      for (const r of effects.stockReservations ?? []) {
+        const levels = await tx.stockLevel.findMany({ where: { storeId: order.storeId, productId: r.productId } });
+        let remaining = r.quantity;
+        for (const lvl of levels) {
+          if (remaining <= 0) break;
+          const updated = await tx.stockLevel.update({
+            where: { id: lvl.id },
+            data: { quantityReserved: { increment: remaining } },
+          });
+          await tx.stockMovement.create({
+            data: { storeId: order.storeId, productId: r.productId, warehouseId: lvl.warehouseId, delta: remaining, type: "RESERVE", orderId: o.id, createdBy: "checkout", balanceAfter: updated.quantityReserved },
+          });
+          remaining = 0;
+        }
+      }
+
+      // 2) Convert the cart (guarded to OPEN — a concurrent retry is a no-op here)
+      if (effects.cart) {
+        await tx.cart.updateMany({
+          where: { token: effects.cart.token, storeId: effects.cart.storeId, status: "OPEN" },
+          data: { status: "CONVERTED" },
+        });
+      }
+
+      // 3) Voucher redemption row (unique (voucherId, orderId) prevents double-redeem)
+      if (effects.voucherRedemption) {
+        await tx.voucherRedemption.create({
+          data: { voucherId: effects.voucherRedemption.voucherId, storeId: order.storeId, orderId: o.id },
+        });
+      }
+
+      // 4) Loyalty: deduct points + ledger entry (single tx — no overdraw under concurrency)
+      if (effects.loyalty) {
+        const sc = await tx.storeCustomer.findUnique({ where: { id: effects.loyalty.storeCustomerId } });
+        if (sc && sc.loyaltyBalancePoints >= effects.loyalty.points) {
+          await tx.storeCustomer.update({
+            where: { id: sc.id },
+            data: { loyaltyBalancePoints: { decrement: effects.loyalty.points } },
+          });
+          await tx.loyaltyEntry.create({
+            data: {
+              storeId: order.storeId,
+              customerId: effects.loyalty.customerId,
+              storeCustomerId: sc.id,
+              type: "REDEEM",
+              points: -effects.loyalty.points,
+              balanceAfter: sc.loyaltyBalancePoints - effects.loyalty.points,
+              orderId: o.id,
+              description: "checkout redemption",
+            },
+          });
+        }
+      }
+
+      // 5) Credit purchase: balance increment + ledger entry
+      if (effects.credit) {
+        const sc = await tx.storeCustomer.findUnique({ where: { id: effects.credit.storeCustomerId } });
+        if (sc) {
+          await tx.storeCustomer.update({
+            where: { id: sc.id },
+            data: { creditBalanceMinor: { increment: effects.credit.amountMinor } },
+          });
+          await tx.creditEntry.create({
+            data: {
+              storeId: order.storeId,
+              storeCustomerId: sc.id,
+              orderId: o.id,
+              type: "purchase",
+              amountMinor: effects.credit.amountMinor,
+              startAt: new Date(),
+              dueAt: new Date(Date.now() + 30 * 86_400_000),
+              createdBy: "checkout",
+            },
+          });
+        }
+      }
+
+      return o;
+    }, { timeout: 30_000 });
+
+    return { ...order, id: created.id };
   }
 
   async findByIdempotencyKey(key: string): Promise<OrderRecord | null> {
