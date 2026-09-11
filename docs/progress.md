@@ -1,6 +1,18 @@
 # SAM STORE — Progress Log
 
-Updated: 2026-09-11 · Project hardening Modules 1–4 ✅ · Active model: `deepseek/deepseek-v4-flash-0731` (openrouter)
+Updated: 2026-09-11 · **Project hardening Modules 1–11 ALL COMPLETE** · Active model: `deepseek/deepseek-v4-flash-0731` (openrouter)
+
+## Project hardening — Modules 5–11 (run together, all ✅, pushed)
+
+| Mod | Summary | Commit |
+|---|---|---|
+| **M5 atomic checkout** | `OrderRepository.createAtomic` — order+items+history+claim+stock RESERVE+cart CONVERTED+voucher+loyalty+credit in ONE transaction; checkout now actually reserves stock; concurrent same-key → P2002 → same order returned | `5d20eac` |
+| **M6 voucher/loyalty/credit concurrency** | Guarded single-statement UPDATEs (voucher `usedCount`, loyalty balance, credit limit) — no cross-transaction locks (pooler-safe); over-limit → clean conflict; `CreditService.recordPurchase` idempotent | `e2b2069` |
+| **M7 void/refund hardening** | Double-void rejected (stock restored once); one refund per order; refunds capped at remaining captured | `7f31ef4` |
+| **M8 unified fulfillment** | All delivery checks read the explicit `fulfillmentType` (single `isDeliveryOrder`); admin list/fulfillment facet filter on the enum | `0e68b4b` |
+| **M9 outbox worker** | `OutboxWorker` drains PENDING → PROCESSED (order.received → NotificationLog) with retries/backoff/FAILED; checkout enqueues after commit; started in main.ts | `301d135` |
+| **M10 a11y** | Pay/Delivery modals: `role=dialog`+`aria-modal`+`aria-labelledby`+labeled close; Escape closes any open modal | `7be4ab2` |
+| **M11 ops** | `/health` + `/health/ready`; `scripts/reconcile-stock.ts` (dry-run + `--apply`); `docs/runbooks.md` | `ecc8ef2` |
 
 ## Project hardening — Module 4: stock reservation & movement engine
 
