@@ -24,9 +24,16 @@ Never rebuild `.next` while a `next start` is serving it (stale-chunk client err
 npm run typecheck   # contracts + api + web
 npm test            # sequential runner (scripts/run-tests.mjs) — NEVER the raw node --test
                     # (it runs files concurrently and exhausts the Supabase pool: pool_size 15)
+npm run test:e2e    # Playwright critical-path suite (needs both servers up on :3000/:4100)
 npm run build
 npm run db:validate
 ```
+
+E2E suite (`apps/api/e2e/`): API health + public-link access control, admin login →
+dashboard, and the full customer journey (storefront → cart → 3-step delivery COD
+checkout → order placed → claim token single-use 200/409/409 + garbage 401). Single
+worker only. Run order matters (01 → 03) but each spec is self-contained; 03 is
+idempotent across re-runs (it claims the fresh order it just placed).
 
 ## Database (remote Supabase Postgres — no local Docker)
 

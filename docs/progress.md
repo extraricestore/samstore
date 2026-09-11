@@ -1,6 +1,16 @@
 # SAM STORE — Progress Log
 
-Updated: 2026-09-11 · **Project hardening Modules 1–11 ALL COMPLETE** · Active model: `deepseek/deepseek-v4-flash-0731` (openrouter)
+Updated: 2026-09-11 · **Project hardening Modules 1–11 ALL COMPLETE + Playwright E2E** · Active model: `deepseek/deepseek-v4-flash-0731` (openrouter)
+
+## Playwright critical-path E2E (`b013fd5`)
+
+| Spec | Proves |
+|---|---|
+| `01-api-health` | `/health`+`/health/ready`; public link 404 on wrong/missing token, 200 + `{store, products}` on the real one |
+| `02-admin-login` | seeded demo login → dashboard; live browser-session API round-trip 200 |
+| `03-storefront-checkout` | full journey: menu → add to cart → 3-step delivery COD checkout → placed (SAMSTO-) → claim token from Copy button → admin detail shows exact token + `fulfillmentType DELIVERY` → claim POST 200-or-409 then 409/409 (atomic single-use) + garbage 401 |
+
+`npm run test:e2e` (single worker — Supabase pool). 4/4 green on live servers.
 
 ## Project hardening — Modules 5–11 (run together, all ✅, pushed)
 
