@@ -1,6 +1,15 @@
 # SAM STORE — Progress Log
 
-Updated: 2026-09-11 · Project hardening Modules 1–3 ✅ · Active model: `deepseek/deepseek-v4-flash-0731` (openrouter)
+Updated: 2026-09-11 · Project hardening Modules 1–4 ✅ · Active model: `deepseek/deepseek-v4-flash-0731` (openrouter)
+
+## Project hardening — Module 4: stock reservation & movement engine
+
+| Item | Status |
+|---|---|
+| New `domain/movements.ts` — `deductStock`/`restoreStock`/`recordMovement` helpers: every stock-level change records an append-only **StockMovement** row (delta sign, type, order link, actor, `balanceAfter`) inside the same transaction | ✅ |
+| Wired into ALL stock mutations: POS sell/hold/preorder/complete (CONSUME), hold-void/cancel (RELEASE), item-edit delta (RELEASE+CONSUME), payments void (VOID_RESTORE), purchases receiving (RECEIPT), warehouse setStock + product-edit stock (ADJUST), transfer complete (TRANSFER_OUT/IN) | ✅ |
+| Ledger invariant tests: signs, balanceAfter, `initial + Σdelta == current onHand` reconciliation | ✅ |
+| POS/payments test cleanup updated for the new StockMovement FK (delete movements before product) | ✅ |
 
 ## Project hardening — Module 3: database integrity foundation
 

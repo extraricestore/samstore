@@ -2,6 +2,7 @@
 
 import { prisma } from "../persistence/prisma-repositories.js";
 import { cacheBust, cacheKey } from "../persistence/ttl-cache.js";
+import { deductStock, restoreStock } from "../domain/movements.js";
 import { assertTransition, paymentEffectFor, type OrderState } from "../domain/order-state.js";
 import { computeOrderTotals } from "../domain/pricing.js";
 import { LoyaltyService } from "../loyalty/loyalty.service.js";
@@ -149,21 +150,10 @@ export class OrderAdminService {
     });
 
     await prisma.$transaction(async (tx) => {
-      // Stock-delta: restore old, deduct new (net effect = difference)
-      for (const oi of oldItems) {
-        const level = await tx.stockLevel.findFirst({ where: { storeId, productId: oi.productId ?? "" } });
-        if (level) await tx.stockLevel.update({ where: { id: level.id }, data: { quantityOnHand: { increment: oi.quantity } } });
-      }
+      // Stock-delta: restore old, deduct new (net effect = difference) + ledger
+      await restoreStock(tx, storeId, oldItems.map((oi) => ({ productId: oi.productId ?? "", quantity: oi.quantity })), { type: "RELEASE", orderId, createdBy: "admin" });
       for (const nl of newLines) {
-        const p = products.find((x) => x.id === nl.productId)!;
-        const levels = await tx.stockLevel.findMany({ where: { storeId, productId: nl.productId, quantityOnHand: { gt: 0 } } });
-        levels.sort((a, b) => (a.warehouseId ? 0 : 1) - (b.warehouseId ? 0 : 1));
-        let remaining = nl.quantity;
-        for (const lvl of levels) {
-          if (remaining <= 0) break;
-          const take = Math.min(lvl.quantityOnHand, remaining);
-          if (take > 0) { await tx.stockLevel.update({ where: { id: lvl.id }, data: { quantityOnHand: { decrement: take } } }); remaining -= take; }
-        }
+        await deductStock(tx, storeId, [{ productId: nl.productId, quantity: nl.quantity }], { type: "CONSUME", orderId, createdBy: "admin" });
       }
       await tx.orderItem.deleteMany({ where: { orderId } });
       await tx.orderItem.createMany({

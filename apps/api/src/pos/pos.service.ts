@@ -7,6 +7,7 @@
 
 import { prisma } from "../persistence/prisma-repositories.js";
 import { cacheBust, cacheKey } from "../persistence/ttl-cache.js";
+import { deductStock, restoreStock as restoreStockLedger } from "../domain/movements.js";
 import { PrismaOrderSequenceRepository } from "../persistence/prisma-repositories.js";
 import { computeOrderTotals } from "../domain/pricing.js";
 import { formatOrderNumber } from "../domain/order-number.js";
@@ -75,31 +76,14 @@ export class PosService {
     return { ok: true, value: { products, lines, totals } };
   }
 
-  /** Decrement stock for a set of lines (prefer default warehouse, then any level). */
-  private async decrementStock(tx: any, storeId: string, lines: LoadedLine[]) {
-    for (const l of lines) {
-      const levels = await tx.stockLevel.findMany({ where: { storeId, productId: l.productId, quantityOnHand: { gt: 0 } } });
-      levels.sort((a: any, b: any) => (a.warehouseId ? 0 : 1) - (b.warehouseId ? 0 : 1));
-      let remaining = l.quantity;
-      for (const lvl of levels) {
-        if (remaining <= 0) break;
-        const take = Math.min(lvl.quantityOnHand, remaining);
-        if (take > 0) {
-          await tx.stockLevel.update({ where: { id: lvl.id }, data: { quantityOnHand: { decrement: take } } });
-          remaining -= take;
-        }
-      }
-    }
+  /** Decrement stock for a set of lines (prefer default warehouse, then any level) + ledger. */
+  private async decrementStock(tx: any, storeId: string, lines: LoadedLine[], opts: { orderId?: string | null; createdBy?: string | null } = {}) {
+    await deductStock(tx, storeId, lines, { type: "CONSUME", orderId: opts.orderId, createdBy: opts.createdBy });
   }
 
-  /** Increment stock back for a set of lines (void / cancel). */
-  private async restoreStock(tx: any, storeId: string, lines: LoadedLine[]) {
-    for (const l of lines) {
-      const level = await tx.stockLevel.findFirst({ where: { storeId, productId: l.productId } });
-      if (level) {
-        await tx.stockLevel.update({ where: { id: level.id }, data: { quantityOnHand: { increment: l.quantity } } });
-      }
-    }
+  /** Increment stock back for a set of lines (void / cancel) + ledger. */
+  private async restoreStock(tx: any, storeId: string, lines: LoadedLine[], opts: { orderId?: string | null; createdBy?: string | null } = {}) {
+    await restoreStockLedger(tx, storeId, lines, { type: "RELEASE", orderId: opts.orderId, createdBy: opts.createdBy });
   }
 
   private async resolveCustomer(storeId: string, input: { customerId?: string; customerName?: string; customerPhone?: string }): Promise<{ storeCustomerId: string | null; displayName: string }> {
@@ -248,7 +232,7 @@ export class PosService {
         const cr = await this.credit.sellOnCredit(tx as never, storeId, custId!, id, finalTotal, actorId, { startAt: input.startAt, dueAt: input.dueAt });
         if (!cr.ok) throw new Error("message" in cr.error ? cr.error.message : "Credit declined");
       }
-      await this.decrementStock(tx, storeId, lines);
+      await this.decrementStock(tx, storeId, lines, { orderId: id, createdBy: actorId });
     }, { timeout: 30_000 });
 
     // v4: record the redemption only after the order exists (checkout pattern).
@@ -289,7 +273,7 @@ export class PosService {
         id, orderNumber, status: "ON_HOLD", paymentMethod: "cash", paymentStatus: "PENDING",
         currencyCode: store.currencyCode, totals, storeCustomerId: custId, customerName: displayName, lines,
       });
-      await this.decrementStock(tx, storeId, lines);
+      await this.decrementStock(tx, storeId, lines, { orderId: id, createdBy: actorId });
     }, { timeout: 30_000 });
     return { ok: true, value: { orderId: id, orderNumber, totalMinor: totals.totalMinor } };
   }
@@ -370,7 +354,7 @@ export class PosService {
         currencyCode: store.currencyCode, totals, storeCustomerId: custId, customerName: displayName, lines,
         preorder: { startAt: input.startAt ?? new Date().toISOString(), dueAt: input.dueAt ?? null },
       });
-      await this.decrementStock(tx, storeId, lines);
+      await this.decrementStock(tx, storeId, lines, { orderId: id, createdBy: actorId });
     }, { timeout: 30_000 });
     cacheBust(cacheKey("products", storeId));
     cacheBust(cacheKey("orders", storeId));
@@ -456,8 +440,8 @@ export class PosService {
 
     await prisma.$transaction(async (tx) => {
       // Restore stock for removed lines, decrement for added (delta approach).
-      await this.restoreStock(tx, storeId, oldLines);
-      await this.decrementStock(tx, storeId, lines);
+      await this.restoreStock(tx, storeId, oldLines, { orderId: holdId, createdBy: actorId });
+      await this.decrementStock(tx, storeId, lines, { orderId: holdId, createdBy: actorId });
       await tx.orderItem.deleteMany({ where: { orderId: holdId } });
       await tx.orderItem.createMany({
         data: lines.map((l) => ({
@@ -593,7 +577,7 @@ export class PosService {
     const lines: LoadedLine[] = items.map((i) => ({ productId: i.productId ?? "", quantity: i.quantity, unitPriceMinor: i.unitPriceMinor, name: i.productName, sku: i.sku }));
 
     await prisma.$transaction(async (tx) => {
-      await this.restoreStock(tx, storeId, lines);
+      await this.restoreStock(tx, storeId, lines, { orderId: holdId, createdBy: actorId });
       await tx.order.update({ where: { id: holdId }, data: { status: "CANCELLED", paymentStatus: "CANCELLED_REFUND" } });
       await tx.orderStatusHistory.create({
         data: { orderId: holdId, storeId, fromStatus: "ON_HOLD", toStatus: "CANCELLED", reason: reason?.trim() ?? null, actorType: "pos_void", actorId: actorId },

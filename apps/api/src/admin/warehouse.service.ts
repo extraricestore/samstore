@@ -41,13 +41,22 @@ export class WarehouseService {
       return { ok: false, error: { type: "validation", errors: ["quantityOnHand must be a non-negative integer"] } };
     }
 
-    // Upsert by (warehouse, product): find then create/update.
+    // Upsert by (warehouse, product): find then create/update. + ledger (ADJUST delta)
     const existing = await prisma.stockLevel.findFirst({ where: { storeId, productId, warehouseId } });
     if (existing) {
-      await prisma.stockLevel.update({ where: { id: existing.id }, data: { quantityOnHand } });
+      const delta = quantityOnHand - existing.quantityOnHand;
+      const updated = await prisma.stockLevel.update({ where: { id: existing.id }, data: { quantityOnHand } });
+      if (delta !== 0) {
+        await prisma.stockMovement.create({
+          data: { storeId, productId, warehouseId, delta, type: "ADJUST", orderId: null, createdBy: null, note: "manual stock set", balanceAfter: updated.quantityOnHand },
+        });
+      }
     } else {
-      await prisma.stockLevel.create({
+      const created = await prisma.stockLevel.create({
         data: { storeId, productId, warehouseId, quantityOnHand },
+      });
+      await prisma.stockMovement.create({
+        data: { storeId, productId, warehouseId, delta: quantityOnHand, type: "ADJUST", orderId: null, createdBy: null, note: "manual stock set", balanceAfter: created.quantityOnHand },
       });
     }
     return { ok: true, value: { id: productId } };
@@ -119,18 +128,30 @@ export class WarehouseService {
     }
 
     await prisma.$transaction(async (tx) => {
-      // Decrement source
-      await tx.stockLevel.updateMany({
-        where: { storeId, productId: transfer.productId, warehouseId: transfer.fromWarehouseId },
-        data: { quantityOnHand: { decrement: transfer.quantity } },
-      });
-      // Increment destination (upsert)
+      // Decrement source + ledger
+      const fromLevel = await tx.stockLevel.findFirst({ where: { storeId, productId: transfer.productId, warehouseId: transfer.fromWarehouseId } });
+      if (fromLevel) {
+        const updated = await tx.stockLevel.update({
+          where: { id: fromLevel.id },
+          data: { quantityOnHand: { decrement: transfer.quantity } },
+        });
+        await tx.stockMovement.create({
+          data: { storeId, productId: transfer.productId, warehouseId: transfer.fromWarehouseId, delta: -transfer.quantity, type: "TRANSFER_OUT", orderId: null, createdBy: null, note: `transfer ${transfer.id}`, balanceAfter: updated.quantityOnHand },
+        });
+      }
+      // Increment destination (upsert) + ledger
       const dest = await tx.stockLevel.findFirst({ where: { storeId, productId: transfer.productId, warehouseId: transfer.toWarehouseId } });
       if (dest) {
-        await tx.stockLevel.update({ where: { id: dest.id }, data: { quantityOnHand: { increment: transfer.quantity } } });
+        const updated = await tx.stockLevel.update({ where: { id: dest.id }, data: { quantityOnHand: { increment: transfer.quantity } } });
+        await tx.stockMovement.create({
+          data: { storeId, productId: transfer.productId, warehouseId: transfer.toWarehouseId, delta: transfer.quantity, type: "TRANSFER_IN", orderId: null, createdBy: null, note: `transfer ${transfer.id}`, balanceAfter: updated.quantityOnHand },
+        });
       } else {
-        await tx.stockLevel.create({
+        const created = await tx.stockLevel.create({
           data: { storeId, productId: transfer.productId, warehouseId: transfer.toWarehouseId, quantityOnHand: transfer.quantity },
+        });
+        await tx.stockMovement.create({
+          data: { storeId, productId: transfer.productId, warehouseId: transfer.toWarehouseId, delta: transfer.quantity, type: "TRANSFER_IN", orderId: null, createdBy: null, note: `transfer ${transfer.id}`, balanceAfter: created.quantityOnHand },
         });
       }
       await tx.stockTransfer.update({

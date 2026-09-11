@@ -55,14 +55,16 @@ export class PurchasesService {
         },
       });
       for (const it of input.items) {
-        // Add stock to the default warehouse (or a legacy warehouse-less level)
+        // Add stock to the default warehouse (or a legacy warehouse-less level) + ledger
         const level = defaultWarehouse
           ? await tx.stockLevel.findFirst({ where: { storeId, productId: it.productId, warehouseId: defaultWarehouse.id } })
           : await tx.stockLevel.findFirst({ where: { storeId, productId: it.productId, warehouseId: null } });
+        let balanceAfter: number;
         if (level) {
-          await tx.stockLevel.update({ where: { id: level.id }, data: { quantityOnHand: { increment: it.quantity } } });
+          const updated = await tx.stockLevel.update({ where: { id: level.id }, data: { quantityOnHand: { increment: it.quantity } } });
+          balanceAfter = updated.quantityOnHand;
         } else {
-          await tx.stockLevel.create({
+          const created = await tx.stockLevel.create({
             data: {
               storeId,
               productId: it.productId,
@@ -71,7 +73,21 @@ export class PurchasesService {
               quantityReserved: 0,
             },
           });
+          balanceAfter = created.quantityOnHand;
         }
+        await tx.stockMovement.create({
+          data: {
+            storeId,
+            productId: it.productId,
+            warehouseId: defaultWarehouse?.id ?? null,
+            delta: it.quantity,
+            type: "RECEIPT",
+            orderId: null,
+            createdBy: actorId,
+            note: "purchase received",
+            balanceAfter,
+          },
+        });
         // Update latest cost (COGS feed for P10)
         await tx.product.update({ where: { id: it.productId }, data: { costMinor: it.costMinor } });
       }

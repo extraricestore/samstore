@@ -6,6 +6,7 @@
 // - Refund: negative Payment + order → CANCELLED with reason (audited).
 
 import { prisma } from "../persistence/prisma-repositories.js";
+import { restoreStock } from "../domain/movements.js";
 import type { ApiError } from "@sam-store/contracts";
 
 export type PaymentResult<T> = { ok: true; value: T } | { ok: false; error: ApiError };
@@ -85,12 +86,8 @@ export class PaymentsService {
     if (order.paymentStatus === "COLLECTED") return { ok: false, error: { type: "conflict", message: "Collected sales must be refunded, not voided" } };
 
     await prisma.$transaction(async (tx) => {
-      // Restore stock (per line)
-      for (const item of order.items) {
-        if (!item.productId) continue;
-        const level = await tx.stockLevel.findFirst({ where: { storeId, productId: item.productId } });
-        if (level) await tx.stockLevel.update({ where: { id: level.id }, data: { quantityOnHand: { increment: item.quantity } } });
-      }
+      // Restore stock (per line) + ledger
+      await restoreStock(tx, storeId, order.items.map((it) => ({ productId: it.productId ?? "", quantity: it.quantity })), { type: "VOID_RESTORE", orderId, createdBy: actorId });
       await tx.order.update({ where: { id: orderId }, data: { status: "CANCELLED", paymentStatus: "CANCELLED_REFUND" } });
       await tx.payment.create({
         data: { orderId, storeId, method: "cash", amountMinor: 0, note: `VOID: ${reason?.trim() ?? "same-day void"}`.slice(0, 200), type: "void", createdBy: actorId },

@@ -130,22 +130,36 @@ export class ProductAdminService {
         },
       });
       if (input.stock !== undefined) {
-        // Update stock on the default warehouse (or warehouse-less legacy row) — first match.
+        // Update stock on the default warehouse (or warehouse-less legacy row) — first match. + ledger (ADJUST)
         const defaultWarehouse = await tx.warehouse.findFirst({ where: { storeId, isDefault: true } });
         const existing = await tx.stockLevel.findFirst({
           where: { storeId, productId, warehouseId: defaultWarehouse?.id ?? null },
         });
+        let warehouseId: string | null = null;
+        let delta = 0;
+        let balanceAfter = 0;
         if (existing) {
-          await tx.stockLevel.update({ where: { id: existing.id }, data: { quantityOnHand: input.stock } });
+          delta = input.stock - existing.quantityOnHand;
+          const updated = await tx.stockLevel.update({ where: { id: existing.id }, data: { quantityOnHand: input.stock } });
+          warehouseId = updated.warehouseId; balanceAfter = updated.quantityOnHand;
         } else if (defaultWarehouse) {
-          await tx.stockLevel.create({ data: { storeId, productId, warehouseId: defaultWarehouse.id, quantityOnHand: input.stock } });
+          const created = await tx.stockLevel.create({ data: { storeId, productId, warehouseId: defaultWarehouse.id, quantityOnHand: input.stock } });
+          warehouseId = created.warehouseId; delta = input.stock; balanceAfter = created.quantityOnHand;
         } else {
           const anyRow = await tx.stockLevel.findFirst({ where: { storeId, productId } });
           if (anyRow) {
-            await tx.stockLevel.update({ where: { id: anyRow.id }, data: { quantityOnHand: input.stock } });
+            delta = input.stock - anyRow.quantityOnHand;
+            const updated = await tx.stockLevel.update({ where: { id: anyRow.id }, data: { quantityOnHand: input.stock } });
+            warehouseId = updated.warehouseId; balanceAfter = updated.quantityOnHand;
           } else {
-            await tx.stockLevel.create({ data: { storeId, productId, quantityOnHand: input.stock } });
+            const created = await tx.stockLevel.create({ data: { storeId, productId, quantityOnHand: input.stock } });
+            delta = input.stock; balanceAfter = created.quantityOnHand;
           }
+        }
+        if (delta !== 0) {
+          await tx.stockMovement.create({
+            data: { storeId, productId, warehouseId, delta, type: "ADJUST", orderId: null, createdBy: null, note: "product edit stock", balanceAfter },
+          });
         }
       }
     });

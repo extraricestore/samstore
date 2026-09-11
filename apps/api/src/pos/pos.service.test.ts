@@ -67,6 +67,7 @@ async function cleanupFixture(storeId: string, customerId: string) {
     await prisma.order.deleteMany({ where: { id: { in: orderIds } } });
   }
   await prisma.storeCounter.deleteMany({ where: { storeId } });
+  await prisma.stockMovement.deleteMany({ where: { storeId } }); // M4 ledger FK (before product delete)
   await prisma.stockLevel.deleteMany({ where: { storeId } });
   await prisma.product.deleteMany({ where: { storeId } });
   await prisma.storeSettings.deleteMany({ where: { storeId } });
