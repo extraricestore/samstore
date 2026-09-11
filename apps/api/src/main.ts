@@ -37,6 +37,12 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bodyParser: false });
   app.enableShutdownHooks();
 
+  // M9: drain the transactional outbox (notifications etc.) every few seconds.
+  const { OutboxWorker } = await import("./notifications/outbox.service.js");
+  const outbox = new OutboxWorker();
+  outbox.start(5_000);
+  app.getHttpAdapter().getInstance().on?.("close", () => outbox.stop());
+
   app.use(express.json({ limit: "5mb" }));
   app.use(express.urlencoded({ extended: true, limit: "5mb" }));
 

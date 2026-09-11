@@ -342,7 +342,29 @@ export class CheckoutService {
       }
     }
 
-    // 10. Post-order notification hook (Messenger bridge — suppressed until a store is connected)
+    // 10. Enqueue the post-order notification through the OUTBOX (Module 9) —
+    //     the side effect is drained by OutboxWorker; a failure here must never
+    //     fail the checkout.
+    try {
+      if (created) {
+        const { enqueueOutboxEvent } = await import("../notifications/outbox.service.js");
+        await enqueueOutboxEvent({
+          storeId: created.storeId,
+          aggregateType: "order",
+          aggregateId: created.id,
+          eventType: "order.received",
+          payload: {
+            orderNumber: created.orderNumber,
+            totalMinor: created.totalMinor,
+            currencyCode: created.currencyCode,
+            psid: `order_${created.orderNumber}`,
+            text: `Order ${created.orderNumber} received (${created.totalMinor / 100} ${created.currencyCode}).`,
+          },
+        });
+      }
+    } catch {
+      // Non-blocking by design.
+    }
     if (this.onOrderPlaced) {
       await this.onOrderPlaced(created);
     }
