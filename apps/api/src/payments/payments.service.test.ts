@@ -1,9 +1,66 @@
-import { test } from "node:test";
+import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { PaymentsService } from "./payments.service.js";
+import { prisma } from "../persistence/prisma-repositories.js";
 
 const svc = new PaymentsService();
 const STORE = "cmtifdks2000094ic1j9w8th7";
+
+const run = `PAY${Date.now()}${Math.floor(Math.random() * 1000)}`;
+const createdIds: string[] = [];
+let slugSeq = 0;
+async function makeStore() {
+  slugSeq += 1;
+  const s = await prisma.store.create({ data: { slug: `${run}-s${slugSeq}`.toLowerCase(), name: `Pay ${run}` } });
+  createdIds.push(s.id);
+  return s;
+}
+async function makeProduct(storeId: string) {
+  const p = await prisma.product.create({ data: { storeId, sku: `PAY-${storeId.slice(-4)}`, name: "P", priceMinor: 10000 } });
+  createdIds.push(p.id);
+  await prisma.stockLevel.create({ data: { storeId, productId: p.id, quantityOnHand: 10 } });
+  return p;
+}
+async function makeOrder(storeId: string, status: string, paymentStatus: string, items?: { productId: string; quantity: number }[]) {
+  const o = await prisma.order.create({
+    data: {
+      orderNumber: `${run}-${createdIds.length}-${storeId.slice(-4)}`,
+      storeId,
+      status: status as never,
+      paymentStatus: paymentStatus as never,
+      currencyCode: "PHP",
+      subtotalMinor: 10000, deliveryFeeMinor: 0, discountMinor: 0, totalMinor: 10000,
+      snapshot: { items: [] }, paymentMethod: "cash",
+      idempotencyKey: `pay-${createdIds.length}-${Date.now()}`,
+      cartToken: `pc-${createdIds.length}`,
+      customerName: "C", customerPhone: "+639176543210", deliveryAddressLine1: "1 St",
+    },
+  });
+  createdIds.push(o.id);
+  if (items?.length) {
+    await prisma.orderItem.createMany({ data: items.map((i) => ({ orderId: o.id, storeId, productId: i.productId, productName: "P", sku: "P", unitPriceMinor: 10000, quantity: i.quantity, lineTotalMinor: 10000 * i.quantity })) });
+  }
+  return o;
+}
+after(async () => {
+  if (createdIds.length) {
+    // FK-safe cleanup: delete in dependency order.
+    await prisma.stockMovement.deleteMany({ where: { storeId: { in: createdIds } } });
+    const orders = await prisma.order.findMany({ where: { storeId: { in: createdIds } }, select: { id: true } });
+    const oid = orders.map((o) => o.id);
+    if (oid.length) {
+      await prisma.orderStatusHistory.deleteMany({ where: { orderId: { in: oid } } });
+      await prisma.orderItem.deleteMany({ where: { orderId: { in: oid } } });
+      await prisma.orderClaimToken.deleteMany({ where: { orderId: { in: oid } } });
+      await prisma.payment.deleteMany({ where: { orderId: { in: oid } } });
+      await prisma.order.deleteMany({ where: { id: { in: oid } } });
+    }
+    await prisma.stockLevel.deleteMany({ where: { productId: { in: createdIds } } });
+    await prisma.product.deleteMany({ where: { id: { in: createdIds } } });
+    await prisma.store.deleteMany({ where: { id: { in: createdIds } } });
+  }
+  await prisma.$disconnect();
+});
 
 test("recordPayment rejects unknown order", async () => {
   const r = await svc.recordPayment({ orderId: "nope", storeId: STORE, method: "cash", amountMinor: 100 });
@@ -32,4 +89,54 @@ test("refund rejects unknown order", async () => {
 
 test("paymentsFor unknown order returns null", async () => {
   assert.equal(await svc.paymentsFor("nope", STORE), null);
+});
+
+test("M7: a second VOID is rejected — stock is never restored twice", async () => {
+  const store = await makeStore();
+  const product = await makeProduct(store.id);
+  const order = await makeOrder(store.id, "COMPLETED", "PENDING", [{ productId: product.id, quantity: 2 }]);
+  const level = await prisma.stockLevel.findFirst({ where: { storeId: store.id, productId: product.id } });
+  const before = level!.quantityOnHand;
+
+  const r1 = await svc.voidOrder(order.id, store.id, "actor", "double-void test");
+  assert.equal(r1.ok, true, "first void succeeds");
+  const after1 = (await prisma.stockLevel.findUnique({ where: { id: level!.id } }))!.quantityOnHand;
+  assert.equal(after1, before + 2, "stock restored once");
+
+  const r2 = await svc.voidOrder(order.id, store.id, "actor", "double-void test");
+  assert.equal(r2.ok, false, "second void is rejected");
+  if (!r2.ok) assert.equal(r2.error.type, "conflict");
+  const after2 = (await prisma.stockLevel.findUnique({ where: { id: level!.id } }))!.quantityOnHand;
+  assert.equal(after2, after1, "stock NOT restored a second time");
+});
+
+test("M7: a partial refund within the captured amount is allowed and audited", async () => {
+  const store = await makeStore();
+  const order = await makeOrder(store.id, "DELIVERED", "COLLECTED");
+  await prisma.payment.create({ data: { orderId: order.id, storeId: store.id, method: "cash", amountMinor: 10000, type: "payment" } });
+
+  const part = await svc.refundOrder(order.id, store.id, "actor", 4000, "partial");
+  assert.equal(part.ok, true, "partial refund within captured amount succeeds");
+  const refunds = await prisma.payment.findMany({ where: { orderId: order.id, type: "refund" } });
+  assert.equal(refunds.length, 1);
+  assert.equal(refunds[0]!.amountMinor, -4000);
+  // A second refund is rejected by the order-status guard (already CANCELLED) — one refund per order.
+  const again = await svc.refundOrder(order.id, store.id, "actor", 4000, "partial-2");
+  assert.equal(again.ok, false);
+  if (!again.ok) assert.equal(again.error.type, "conflict");
+});
+
+test("M7: over-capture refund is rejected with a conflict", async () => {
+  const store = await makeStore();
+  const order = await makeOrder(store.id, "DELIVERED", "COLLECTED");
+  await prisma.payment.create({ data: { orderId: order.id, storeId: store.id, method: "cash", amountMinor: 10000, type: "payment" } });
+
+  const over = await svc.refundOrder(order.id, store.id, "actor", 99900, "over");
+  assert.equal(over.ok, false, "refund above captured amount is rejected");
+  if (!over.ok) {
+    assert.equal(over.error.type, "conflict");
+    assert.ok(String(over.error.message).includes("remaining captured"), "message explains the cap");
+  }
+  const paymentRows = await prisma.payment.findMany({ where: { orderId: order.id, type: "refund" } });
+  assert.equal(paymentRows.length, 0, "no refund row was written");
 });

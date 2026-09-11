@@ -84,6 +84,7 @@ export class PaymentsService {
     });
     if (!order) return { ok: false, error: { type: "not_found", message: "Order not found" } };
     if (order.paymentStatus === "COLLECTED") return { ok: false, error: { type: "conflict", message: "Collected sales must be refunded, not voided" } };
+    if (order.status === "CANCELLED") return { ok: false, error: { type: "conflict", message: "Order is already cancelled" } };
 
     await prisma.$transaction(async (tx) => {
       // Restore stock (per line) + ledger
@@ -104,9 +105,19 @@ export class PaymentsService {
     const order = await prisma.order.findFirst({ where: { id: orderId, storeId } });
     if (!order) return { ok: false, error: { type: "not_found", message: "Order not found" } };
     if (order.paymentStatus !== "COLLECTED") return { ok: false, error: { type: "conflict", message: "Only collected orders can be refunded" } };
+    if (order.status === "CANCELLED") return { ok: false, error: { type: "conflict", message: "Order is already cancelled (refunded)" } };
     const refundAmount = amountMinor ?? order.totalMinor;
     if (!Number.isInteger(refundAmount) || refundAmount <= 0) {
       return { ok: false, error: { type: "validation", errors: ["refund amount must be a positive integer"] } };
+    }
+    // M7: cap the refund at the REMAINING captured amount (partial refunds allowed;
+    // repeated/over refunds rejected — stock/payment can never go negative).
+    const payments = await prisma.payment.findMany({ where: { orderId }, select: { amountMinor: true, type: true } });
+    const captured = payments.filter((p) => p.type === "payment" && p.amountMinor > 0).reduce((s, p) => s + p.amountMinor, 0);
+    const refunded = payments.filter((p) => p.type === "refund" && p.amountMinor < 0).reduce((s, p) => s + -p.amountMinor, 0);
+    const remaining = captured - refunded;
+    if (refundAmount > remaining) {
+      return { ok: false, error: { type: "conflict", message: `Refund exceeds the remaining captured amount (₱${(remaining / 100).toFixed(2)} available)` } };
     }
 
     await prisma.$transaction(async (tx) => {
