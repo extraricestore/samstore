@@ -15,7 +15,8 @@ import { formatOrderNumber } from "../domain/order-number.js";
 import { randomId } from "../persistence/repositories.js";
 import { CreditService } from "../credit/credit.service.js";
 import { LoyaltyService } from "../loyalty/loyalty.service.js";
-import type { ApiError, PosSellRequest, PosSellResponse, PosHoldRequest, PosHoldItemsRequest, PosHoldCompleteRequest, PosSellItem, PreOrderCreateRequest, PreOrderFinalizeRequest, PreOrderFinalizeResponse } from "@sam-store/contracts";
+import { ensureMethods, prepareTenders, writeTenders } from "../payments/tenders.js";
+import type { ApiError, PosSellRequest, PosSellResponse, PosHoldRequest, PosHoldItemsRequest, PosHoldCompleteRequest, PosSellItem, PosTender, PreOrderCreateRequest, PreOrderFinalizeRequest, PreOrderFinalizeResponse } from "@sam-store/contracts";
 
 export type PosResult<T> = { ok: true; value: T } | { ok: false; error: ApiError };
 
@@ -164,6 +165,58 @@ export class PosService {
 
   // ─── immediate sale ───────────────────────────────────────────────────────────────
 
+  /**
+   * M1: the tenders that settle this sale. When the caller sends an explicit list it wins;
+   * otherwise the legacy single-method input becomes a one-row tender list, so existing
+   * clients (and the UI until M1.3) behave exactly as before.
+   */
+  private tenderList(
+    input: { paymentMethod: "cash" | "credit"; tenderedMinor?: number; tenders?: PosTender[] },
+    totalMinor: number,
+  ): PosTender[] {
+    if (Array.isArray(input.tenders) && input.tenders.length > 0) return input.tenders;
+    return input.paymentMethod === "cash"
+      ? [{ methodCode: "cash", amountMinor: totalMinor, tenderedMinor: input.tenderedMinor ?? totalMinor }]
+      : [{ methodCode: "credit", amountMinor: totalMinor }];
+  }
+
+  /** Which kinds of money this sale involves — drives the drawer gate and signature rule. */
+  private async tenderKinds(
+    storeId: string,
+    input: { paymentMethod: "cash" | "credit"; tenders?: PosTender[] },
+    tenders: PosTender[],
+  ): Promise<{ hasCash: boolean; hasCredit: boolean }> {
+    const explicit = Array.isArray(input.tenders) && input.tenders.length > 0;
+    if (!explicit) {
+      return { hasCash: input.paymentMethod === "cash", hasCredit: input.paymentMethod === "credit" };
+    }
+    const methods = await ensureMethods(storeId);
+    const kindOf = new Map(methods.map((m) => [m.code, m.kind as string]));
+    const codes = tenders.map((t) => (t.methodCode ?? "").trim().toLowerCase());
+    return { hasCash: codes.some((c) => kindOf.get(c) === "CASH"), hasCredit: codes.some((c) => kindOf.get(c) === "CREDIT") };
+  }
+
+  /**
+   * M1: validate the tender list for a counter sale (which must settle in full) and return
+   * the plan the transaction writes. Throws nothing — callers map the error.
+   */
+  private async prepareCounterTenders(
+    storeId: string,
+    orderId: string,
+    input: { paymentMethod: "cash" | "credit"; tenderedMinor?: number; tenders?: PosTender[] },
+    totalMinor: number,
+    storeCustomerId: string | null,
+  ) {
+    return prepareTenders({
+      storeId,
+      orderId,
+      targetMinor: totalMinor,
+      storeCustomerId,
+      tenders: this.tenderList(input, totalMinor),
+      requireFullCoverage: true, // a counter sale is settled on the spot
+    });
+  }
+
   async sell(storeId: string, actorId: string, input: PosSellRequest): Promise<PosResult<PosSellResponse>> {
     if (!this.validateItems(input.items)) {
       return { ok: false, error: { type: "validation", errors: ["At least one item with positive quantity is required"] } };
@@ -184,17 +237,19 @@ export class PosService {
       return { ok: false, error: { type: "validation", errors: ["Credit sales require a linked customer"] } };
     }
 
-    // N1: a counter CASH sale must belong to an open drawer shift (store setting
-    // requireOpenShift, default on). Credit sales do not touch the drawer.
+    // M1: the tender list decides what this sale touches — cash money needs an open
+    // drawer shift; a credit tender needs the customer's signature.
+    const orderedTenders = this.tenderList(input, 0); // amounts are recomputed once the total is known
+    const kinds = await this.tenderKinds(storeId, input, orderedTenders);
     let registerSessionId: string | null = null;
-    if (input.paymentMethod === "cash") {
+    if (kinds.hasCash) {
       const session = await this.registers.requireOpenSession(storeId);
       if (!session.ok) return { ok: false, error: { type: "conflict", message: session.error.message } };
       registerSessionId = session.value;
     }
 
     // v4: utang sales require a captured signature (data-URL PNG).
-    if (input.paymentMethod === "credit" && !this.isValidSignature(input.signatureData)) {
+    if (kinds.hasCredit && !this.isValidSignature(input.signatureData)) {
       return { ok: false, error: { type: "validation", errors: ["Signature is required for credit sales"] } };
     }
 
@@ -224,27 +279,28 @@ export class PosService {
     const orderNumber = formatOrderNumber(store.slug, seq);
     const id = randomId();
 
+    // M1: validate the tender list before opening the transaction (a counter sale settles in full).
+    const prepared = await this.prepareCounterTenders(storeId, id, input, finalTotal, custId);
+    if (!prepared.ok) return prepared;
+    const plan = prepared.value;
+
     let changeMinor = 0;
     await prisma.$transaction(async (tx) => {
       await this.makeOrder(tx, storeId, actorId, {
         id, orderNumber, status: "COMPLETED", paymentMethod: input.paymentMethod,
-        paymentStatus: input.paymentMethod === "cash" ? "COLLECTED" : "PENDING",
+        paymentStatus: kinds.hasCredit ? "PENDING" : "COLLECTED",
         currencyCode: store.currencyCode, totals, storeCustomerId: custId, customerName: displayName, lines,
         discountMinor, totalMinor: finalTotal,
-        signatureData: input.paymentMethod === "credit" ? input.signatureData : null,
+        signatureData: kinds.hasCredit ? input.signatureData : null,
         registerSessionId,
       });
-      if (input.paymentMethod === "cash") {
-        const tendered = input.tenderedMinor ?? finalTotal;
-        if (tendered < finalTotal) throw new Error("Tendered amount is less than the total");
-        changeMinor = tendered - finalTotal;
-        await tx.payment.create({
-          data: { orderId: id, storeId, method: "cash", amountMinor: finalTotal, changeMinor, type: "payment", createdBy: actorId, note: "POS cash sale", registerSessionId },
-        });
-      } else {
-        const cr = await this.credit.sellOnCredit(tx as never, storeId, custId!, id, finalTotal, actorId, { startAt: input.startAt, dueAt: input.dueAt });
-        if (!cr.ok) throw new Error("message" in cr.error ? cr.error.message : "Credit declined");
-      }
+      if (plan.hasCash) changeMinor = plan.changeMinor;
+      await writeTenders(tx, {
+        storeId, orderId: id, actorId, plan,
+        note: plan.prepared.length > 1 ? `POS sale (${plan.prepared.length} tenders)` : "POS cash sale",
+        registerSessionId,
+        creditTerms: { startAt: input.startAt, dueAt: input.dueAt },
+      });
       await this.decrementStock(tx, storeId, lines, { orderId: id, createdBy: actorId });
     }, { timeout: 30_000 });
 
@@ -501,9 +557,11 @@ export class PosService {
       return { ok: false, error: { type: "validation", errors: ["Signature is required for credit sales"] } };
     }
 
-    // N1: completing a hold with CASH draws from the drawer → needs an open shift.
+    // M1: the tender list decides what this holds touches — cash needs an open shift.
+    const probeTenders = this.tenderList(input, 0); // amounts are computed once the total is known
+    const kinds = await this.tenderKinds(storeId, input, probeTenders);
     let registerSessionId: string | null = null;
-    if (input.paymentMethod === "cash") {
+    if (kinds.hasCash) {
       const session = await this.registers.requireOpenSession(storeId);
       if (!session.ok) return { ok: false, error: { type: "conflict", message: session.error.message } };
       registerSessionId = session.value;
@@ -528,22 +586,22 @@ export class PosService {
       discountMinor += redeemResult.discountMinor;
     }
     const finalTotal = Math.max(0, totalMinor - discountMinor);
+    // M1: validate the tender list before opening the transaction.
+    const prepared = await this.prepareCounterTenders(storeId, holdId, input, finalTotal, custId);
+    if (!prepared.ok) return prepared;
+    const plan = prepared.value;
     const signatureAt = new Date();
 
     let changeMinor = 0;
     let finalStatus: "COMPLETED" | "OUT_FOR_DELIVERY" = "COMPLETED";
     await prisma.$transaction(async (tx) => {
-      if (input.paymentMethod === "cash") {
-        const tendered = input.tenderedMinor ?? finalTotal;
-        if (tendered < finalTotal) throw new Error("Tendered amount is less than the total");
-        changeMinor = tendered - finalTotal;
-        await tx.payment.create({
-          data: { orderId: holdId, storeId, method: "cash", amountMinor: finalTotal, changeMinor, type: "payment", createdBy: actorId, note: "POS cash sale (held)", registerSessionId },
-        });
-      } else {
-        const cr = await this.credit.sellOnCredit(tx as never, storeId, custId!, holdId, finalTotal, actorId, { startAt: input.startAt, dueAt: input.dueAt });
-        if (!cr.ok) throw new Error("message" in cr.error ? cr.error.message : "Credit declined");
-      }
+      if (plan.hasCash) changeMinor = plan.changeMinor;
+      await writeTenders(tx, {
+        storeId, orderId: holdId, actorId, plan,
+        note: plan.prepared.length > 1 ? `POS sale (${plan.prepared.length} tenders, held)` : "POS cash sale (held)",
+        registerSessionId,
+        creditTerms: { startAt: input.startAt, dueAt: input.dueAt },
+      });
       const cur = await tx.order.findUnique({ where: { id: holdId }, select: { snapshot: true } });
       // Send-for-delivery: staff collected payment at the counter for a delivery-tagged order
       // → route it into the delivery pipeline (OUT_FOR_DELIVERY) instead of completing it.
@@ -557,7 +615,7 @@ export class PosService {
           status: finalStatus,
           fulfillmentType: finalStatus === "OUT_FOR_DELIVERY" ? "DELIVERY" : "PICKUP", // M3: explicit
           paymentMethod: input.paymentMethod,
-          paymentStatus: input.paymentMethod === "cash" ? "COLLECTED" : "PENDING",
+          paymentStatus: kinds.hasCredit ? "PENDING" : "COLLECTED",
           customerName: displayName,
           storeCustomerId: custId,
           discountMinor,

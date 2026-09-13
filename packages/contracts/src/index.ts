@@ -147,6 +147,17 @@ export interface PosSellItem {
   quantity: number;
 }
 
+export interface PosTender {
+  /** A payment-method code from the store's registry (cash, gcash, credit, …). */
+  methodCode: string;
+  /** Amount this tender applies to the sale (minor units). */
+  amountMinor: number;
+  /** Cash handed over (≥ amountMinor) — the difference is change. Cash methods only. */
+  tenderedMinor?: number;
+  /** e-wallet / bank reference (required by methods flagged requiresReference). */
+  reference?: string;
+}
+
 export interface PosSellRequest {
   /** optional store customer to link the sale to (must belong to the store) */
   customerId?: string;
@@ -155,6 +166,12 @@ export interface PosSellRequest {
   paymentMethod: "cash" | "credit";
   /** V1: cash tendered (minor) — records a Payment row with change = tendered − total */
   tenderedMinor?: number;
+  /**
+   * M1: optional multi-tender payment. When present these are the tenders that settle the
+   * sale (cash + gcash + utang …); `paymentMethod`/`tenderedMinor` are then ignored except
+   * for the signature/loyalty rules. Counter sales must be settled in full.
+   */
+  tenders?: PosTender[];
   /** V1: utang start/due dates (ISO). Defaults: now / start + store creditTermDays */
   startAt?: string;
   dueAt?: string;
@@ -181,6 +198,8 @@ export interface PosHoldCompleteRequest {
   items?: PosSellItem[];
   paymentMethod: "cash" | "credit";
   tenderedMinor?: number;
+  /** M1: optional multi-tender payment (see PosSellRequest.tenders). */
+  tenders?: PosTender[];
   customerId?: string;
   customerName?: string;
   customerPhone?: string;

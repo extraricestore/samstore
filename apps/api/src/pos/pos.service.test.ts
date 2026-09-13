@@ -585,3 +585,100 @@ test("N1: a cash sale is blocked without an open shift, and the sale records the
     await cleanupFixture(fx.storeId, fx.customerId);
   }
 });
+
+// ── M1: multi-tender counter sales ──────────────────────────────────────────────
+
+test("M1: a POS sale with cash + gcash tenders writes one row per tender and settles COLLECTED", async () => {
+  const fx = await makeFixture();
+  try {
+    const res = await svc.sell(fx.storeId, "cashier-m1", {
+      items: [{ productId: fx.productId, quantity: 1 }],
+      paymentMethod: "cash",
+      tenders: [
+        { methodCode: "cash", amountMinor: 6000, tenderedMinor: 10000 }, // ₱60 applied, ₱100 handed → ₱40 change
+        { methodCode: "gcash", amountMinor: 4000, reference: "GC-M1-1" },
+      ],
+    });
+    assert.equal(res.ok, true, JSON.stringify(res));
+    if (!res.ok) return;
+    assert.equal(res.value.totalMinor, 10000, "the two tenders cover the ₱100 sale");
+    assert.equal(res.value.changeMinor, 4000, "change comes back from the cash tender");
+
+    const rows = await prisma.payment.findMany({
+      where: { orderId: res.value.orderId },
+      select: { method: true, amountMinor: true, changeMinor: true, reference: true },
+    });
+    assert.equal(rows.length, 2, "one Payment row per tender");
+    const cash = rows.find((r) => r.method === "cash");
+    const gcash = rows.find((r) => r.method === "gcash");
+    assert.equal(cash?.amountMinor, 6000);
+    assert.equal(cash?.changeMinor, 4000);
+    assert.equal(gcash?.amountMinor, 4000);
+    assert.equal(gcash?.reference, "GC-M1-1");
+
+    const order = await prisma.order.findUnique({ where: { id: res.value.orderId }, select: { paymentStatus: true } });
+    assert.equal(order?.paymentStatus, "COLLECTED", "no credit tender → nothing outstanding");
+  } finally {
+    await cleanupFixture(fx.storeId, fx.customerId);
+  }
+});
+
+test("M1: a counter sale that is not settled in full is rejected and writes nothing", async () => {
+  const fx = await makeFixture();
+  try {
+    const before = await fixtureOrderCount(fx.storeId);
+    const res = await svc.sell(fx.storeId, "cashier-m1", {
+      items: [{ productId: fx.productId, quantity: 1 }],
+      paymentMethod: "cash",
+      tenders: [
+        { methodCode: "cash", amountMinor: 6000, tenderedMinor: 6000 }, // ₱40 short of ₱100
+        { methodCode: "gcash", amountMinor: 1000, reference: "GC-M1-2" },
+      ],
+    });
+    assert.equal(res.ok, false);
+    assert.equal(res.ok === false && res.error.type, "conflict");
+    assert.equal(await fixtureOrderCount(fx.storeId), before, "no order was created");
+  } finally {
+    await cleanupFixture(fx.storeId, fx.customerId);
+  }
+});
+
+test("M1: a cash+utang counter sale needs the signature and leaves utang outstanding", async () => {
+  const fx = await makeFixture();
+  try {
+    const unsigned = await svc.sell(fx.storeId, "cashier-m1", {
+      items: [{ productId: fx.productId, quantity: 1 }],
+      paymentMethod: "cash",
+      customerId: fx.storeCustomerId,
+      tenders: [
+        { methodCode: "cash", amountMinor: 5000, tenderedMinor: 5000 },
+        { methodCode: "credit", amountMinor: 5000 },
+      ],
+    });
+    assert.equal(unsigned.ok, false, "no signature → the credit tender is refused");
+    assert.equal(unsigned.ok === false && unsigned.error.type, "validation");
+
+    const res = await svc.sell(fx.storeId, "cashier-m1", {
+      items: [{ productId: fx.productId, quantity: 1 }],
+      paymentMethod: "cash",
+      customerId: fx.storeCustomerId,
+      signatureData: "data:image/png;base64,AAAA",
+      tenders: [
+        { methodCode: "cash", amountMinor: 5000, tenderedMinor: 5000 },
+        { methodCode: "credit", amountMinor: 5000 },
+      ],
+    });
+    assert.equal(res.ok, true, JSON.stringify(res));
+    if (!res.ok) return;
+
+    const order = await prisma.order.findUnique({ where: { id: res.value.orderId }, select: { paymentStatus: true } });
+    assert.equal(order?.paymentStatus, "PENDING", "the utang part is not collected");
+    const entries = await prisma.creditEntry.findMany({ where: { orderId: res.value.orderId }, select: { amountMinor: true } });
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0]?.amountMinor, 5000, "only the credit tender hits the ledger");
+    assert.equal(await prisma.payment.count({ where: { orderId: res.value.orderId } }), 2, "both tenders are payment rows");
+  } finally {
+    await prisma.creditEntry.deleteMany({ where: { storeId: fx.storeId } });
+    await cleanupFixture(fx.storeId, fx.customerId);
+  }
+});
