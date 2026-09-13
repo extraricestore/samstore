@@ -1,8 +1,19 @@
-import { Controller, Get, Headers, HttpException, HttpStatus, Inject, Query, Req, UseGuards } from "@nestjs/common";
+import { Controller, Get, Headers, HttpException, HttpStatus, Inject, Post, Body, Query, Req, UseGuards } from "@nestjs/common";
 import { JwtAuthGuard, type AuthPrincipal } from "../auth/auth.guard.js";
 import { resolveTenant, TENANT_ROLES } from "../auth/tenant-context.js";
 import { prisma } from "../persistence/prisma-repositories.js";
+import { assertDto, STOCK_ADJUST_DTO } from "../security/validate.js";
 import { INVENTORY_SERVICE, InventoryService } from "./inventory.service.js";
+
+function statusFor(error: { type: string }): HttpStatus {
+  switch (error.type) {
+    case "validation": return HttpStatus.UNPROCESSABLE_ENTITY;
+    case "not_found": return HttpStatus.NOT_FOUND;
+    case "conflict": return HttpStatus.CONFLICT;
+    case "forbidden": return HttpStatus.FORBIDDEN;
+    default: return HttpStatus.BAD_REQUEST;
+  }
+}
 
 @Controller("admin")
 @UseGuards(JwtAuthGuard)
@@ -25,5 +36,58 @@ export class InventoryController {
     const warehouses = await prisma.warehouse.findMany({ where: { storeId }, select: { id: true, name: true, isDefault: true } });
     const categories = await prisma.category.findMany({ where: { storeId, isActive: true }, select: { id: true, name: true } });
     return { ...data, warehouses, categories };
+  }
+
+  /** POST /admin/stock/adjust — reasoned stock adjustment (manager+). */
+  @Post("stock/adjust")
+  async adjust(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Body() body: { productId?: string; warehouseId?: string; delta?: number; setTo?: number; reason?: string; allowNegative?: boolean },
+    @Headers("x-store-id") headerStoreId?: string,
+  ) {
+    const user = req.user;
+    if (!user) throw new HttpException({ type: "unauthorized", message: "Not authenticated" }, HttpStatus.UNAUTHORIZED);
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.OWNER_MANAGER);
+    const dto = assertDto<{ productId: string; warehouseId?: string; delta?: number; setTo?: number; reason: string; allowNegative?: boolean }>(body ?? {}, STOCK_ADJUST_DTO);
+    const result = await this.inventorySvc.adjust(storeId, user.sub, dto);
+    if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+    return result.value;
+  }
+
+  /** GET /admin/stock/movements — the raw stock ledger (any type), newest first. */
+  @Get("stock/movements")
+  async movements(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Query("productId") productId?: string,
+    @Query("type") type?: string,
+    @Query("from") from?: string,
+    @Query("to") to?: string,
+    @Query("limit") limit?: string,
+    @Headers("x-store-id") headerStoreId?: string,
+  ) {
+    const user = req.user;
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.VIEW);
+    return this.inventorySvc.movements(storeId, {
+      productId, type, from, to,
+      limit: limit ? Number.parseInt(limit, 10) : undefined,
+    });
+  }
+
+  /** GET /admin/stock/adjustments — adjustment history only (ADJUST movements). */
+  @Get("stock/adjustments")
+  async adjustments(
+    @Req() req: Request & { user?: AuthPrincipal },
+    @Query("productId") productId?: string,
+    @Query("from") from?: string,
+    @Query("to") to?: string,
+    @Query("limit") limit?: string,
+    @Headers("x-store-id") headerStoreId?: string,
+  ) {
+    const user = req.user;
+    const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.VIEW);
+    return this.inventorySvc.adjustments(storeId, {
+      productId, from, to,
+      limit: limit ? Number.parseInt(limit, 10) : undefined,
+    });
   }
 }

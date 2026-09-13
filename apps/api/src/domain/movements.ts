@@ -108,6 +108,93 @@ export async function deductStock(tx: MovementTx, storeId: string, lines: { prod
 }
 
 /**
+ * M2 — a first-class, actor-attributed stock adjustment.
+ *
+ * Mirrors the conventions of the other ledger writers: the level is the derived fact, the
+ * movement is the source of truth, and a negative result is refused unless the caller
+ * explicitly allows it (a manager's stock-take correction). `delta` adds/removes;
+ * `setTo` records a counted absolute quantity (the movement carries the difference).
+ */
+export async function adjustStock(
+  tx: MovementTx,
+  input: {
+    storeId: string;
+    productId: string;
+    warehouseId?: string | null;
+    /** Signed change (+add / −remove). Mutually exclusive with `setTo`. */
+    delta?: number;
+    /** Absolute counted quantity (stock-take). Mutually exclusive with `delta`. */
+    setTo?: number;
+    /** Why — stored on the movement's note (the ledger has no separate reason column). */
+    reason: string;
+    actorId: string;
+    /** Allow the balance to go negative (manager stock-take only). */
+    allowNegative?: boolean;
+  },
+): Promise<{ levelId: string; balanceAfter: number; delta: number }> {
+  const { storeId, productId, actorId, reason } = input;
+  if ((input.delta === undefined) === (input.setTo === undefined)) {
+    throw new Error("adjustStock needs exactly one of delta or setTo");
+  }
+  if (input.delta !== undefined && (!Number.isInteger(input.delta) || input.delta === 0)) {
+    throw new Error("delta must be a non-zero integer");
+  }
+  if (input.setTo !== undefined && (!Number.isInteger(input.setTo) || input.setTo < 0)) {
+    throw new Error("setTo must be a non-negative integer");
+  }
+
+  // Resolve the level: the requested warehouse, else the store's default, else the first row.
+  let level = input.warehouseId
+    ? await tx.stockLevel.findFirst({ where: { storeId, productId, warehouseId: input.warehouseId } })
+    : await tx.stockLevel.findFirst({
+        where: { storeId, productId, warehouse: { isDefault: true } },
+      });
+  if (!level) level = await tx.stockLevel.findFirst({ where: { storeId, productId } });
+  if (!level) {
+    const fallbackWarehouse = await tx.warehouse.findFirst({ where: { storeId, isDefault: true }, select: { id: true } });
+    level = await tx.stockLevel.create({
+      data: { storeId, productId, warehouseId: input.warehouseId ?? fallbackWarehouse?.id ?? null, quantityOnHand: 0, quantityReserved: 0 },
+    });
+  }
+
+  const delta = input.setTo !== undefined ? input.setTo - level.quantityOnHand : (input.delta as number);
+  if (delta === 0) {
+    return { levelId: level.id, balanceAfter: level.quantityOnHand, delta: 0 };
+  }
+  const next = level.quantityOnHand + delta;
+  if (next < 0 && !input.allowNegative) {
+    throw new InsufficientStockError(productId, -next);
+  }
+
+  // Guarded single-statement write; a concurrent change is re-read and re-applied once.
+  const changed = await tx.stockLevel.updateMany({
+    where: { id: level.id, quantityOnHand: level.quantityOnHand },
+    data: { quantityOnHand: next },
+  });
+  let balanceAfter = next;
+  if (changed.count === 0) {
+    const fresh = await tx.stockLevel.findUnique({ where: { id: level.id }, select: { quantityOnHand: true } });
+    const retryFrom = fresh?.quantityOnHand ?? 0;
+    const retryTo = input.setTo !== undefined ? input.setTo : retryFrom + delta;
+    if (retryTo < 0 && !input.allowNegative) throw new InsufficientStockError(productId, -retryTo);
+    await tx.stockLevel.update({ where: { id: level.id }, data: { quantityOnHand: retryTo } });
+    balanceAfter = retryTo;
+  }
+
+  await recordMovement(tx, {
+    storeId,
+    productId,
+    warehouseId: level.warehouseId,
+    delta: balanceAfter - level.quantityOnHand, // the change actually applied
+    type: "ADJUST",
+    createdBy: actorId,
+    note: reason,
+    balanceAfter,
+  });
+  return { levelId: level.id, balanceAfter, delta: balanceAfter - level.quantityOnHand };
+}
+
+/**
  * Restore stock for lines (void/cancel/edit-revert), recording a movement.
  * Uses the FIRST level for the product (legacy compatibility).
  */
