@@ -11,6 +11,7 @@ import { revalidateCartLines, CartRevalidationError } from "../domain/cart.js";
 import { computeOrderTotals, InvalidPriceInputError } from "../domain/pricing.js";
 import { normalizeIdempotencyKey, InvalidIdempotencyKeyError } from "../domain/idempotency.js";
 import { formatOrderNumber } from "../domain/order-number.js";
+import { InsufficientStockError } from "../domain/movements.js";
 import { signClaimToken } from "../domain/claim-token.js";
 import type {
   CartRepository,
@@ -325,6 +326,20 @@ export class CheckoutService {
         if (msg.includes("Voucher redemption limit") || msg.includes("Insufficient loyalty") || msg.includes("Credit limit") || msg.includes("Credit customer not found")) {
           return { ok: false, error: { type: "conflict", message: msg } };
         }
+        // Module 4 fix: the guarded reservation write rejected because availability
+        // (onHand - reserved) dropped below the requested quantity mid-flight.
+        // This is the "two buyers, one last unit" loser path — a clean conflict.
+        if (e instanceof InsufficientStockError) {
+          const line = items.find((i) => i.productId === e.productId);
+          const label = line?.productName ?? "An item";
+          return {
+            ok: false,
+            error: {
+              type: "conflict",
+              message: `${label} just went out of stock — please review your cart and try again.`,
+            },
+          };
+        }
         throw e;
       }
     } else {
@@ -342,29 +357,10 @@ export class CheckoutService {
       }
     }
 
-    // 10. Enqueue the post-order notification through the OUTBOX (Module 9) —
-    //     the side effect is drained by OutboxWorker; a failure here must never
-    //     fail the checkout.
-    try {
-      if (created) {
-        const { enqueueOutboxEvent } = await import("../notifications/outbox.service.js");
-        await enqueueOutboxEvent({
-          storeId: created.storeId,
-          aggregateType: "order",
-          aggregateId: created.id,
-          eventType: "order.received",
-          payload: {
-            orderNumber: created.orderNumber,
-            totalMinor: created.totalMinor,
-            currencyCode: created.currencyCode,
-            psid: `order_${created.orderNumber}`,
-            text: `Order ${created.orderNumber} received (${created.totalMinor / 100} ${created.currencyCode}).`,
-          },
-        });
-      }
-    } catch {
-      // Non-blocking by design.
-    }
+    // 10. Notification outbox: the event row is written INSIDE createAtomic's
+    //     transaction (see PrismaOrderRepository.createAtomic step 6), so a
+    //     committed order always has its event and there is no post-commit
+    //     enqueue that could be lost. Nothing to do here.
     if (this.onOrderPlaced) {
       await this.onOrderPlaced(created);
     }

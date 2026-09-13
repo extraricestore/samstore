@@ -12,6 +12,7 @@ import express, { type Request, type Response, type NextFunction } from "express
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module.js";
 import { rateLimitOk, clientKey } from "./security/rate-limit.js";
+import { InsufficientStockFilter } from "./security/domain-exception.filter.js";
 
 const PORT = Number(process.env.PORT ?? 4000);
 const NODE_ENV = (process.env.NODE_ENV ?? "development").toLowerCase();
@@ -36,6 +37,8 @@ async function bootstrap() {
   // bodyParser: false → we install our own parser with an explicit size cap.
   const app = await NestFactory.create(AppModule, { bodyParser: false });
   app.enableShutdownHooks();
+  // Domain errors decided by guarded DB writes → clean conflict responses.
+  app.useGlobalFilters(new InsufficientStockFilter());
 
   // M9: drain the transactional outbox (notifications etc.) every few seconds.
   const { OutboxWorker } = await import("./notifications/outbox.service.js");

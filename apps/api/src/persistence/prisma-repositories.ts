@@ -16,8 +16,16 @@ import type {
   AtomicCheckoutEffects,
 } from "./repositories.js";
 import { OrderStatus, PaymentStatus } from "@prisma/client";
+import { InsufficientStockError } from "../domain/movements.js";
 
-export const prisma = new PrismaClient();
+// Module 4/5 hardening: the managed Postgres pooler can take several seconds to
+// hand out a connection (cold start), while Prisma's interactive-transaction
+// defaults are 5s timeout / 2s max wait — a cold first request then dies with
+// P2028 ("Transaction already closed"). Raise both globally so every interactive
+// transaction in the codebase inherits a budget that fits remote latency.
+export const prisma = new PrismaClient({
+  transactionOptions: { timeout: 30_000, maxWait: 15_000 },
+});
 
 export const ORDER_SEQUENCE_KIND = "ORDER_SEQ";
 export const CLAIM_TOKEN_TTL_DAYS = 30;
@@ -224,7 +232,7 @@ export class PrismaCartRepository implements CartRepository {
           })),
         });
       }
-    });
+    }, { timeout: 30_000 }); // remote managed Postgres: a cold pooler connection can exceed the 5s default
   }
 }
 
@@ -417,23 +425,36 @@ export class PrismaOrderRepository implements OrderRepository {
         });
       }
 
-      // 1) Reserve stock (quantityReserved += qty) + RESERVE movement (ledger)
+      // 1) Reserve stock — CONDITIONAL WRITE at the database boundary. The guard
+      //    (`available = quantityOnHand - quantityReserved >= qty`) is what makes
+      //    "two buyers, one last unit" safe: the loser's UPDATE matches 0 rows and
+      //    the whole transaction rolls back. Products with NO level rows are
+      //    untracked and keep the legacy no-op.
       for (const r of effects.stockReservations ?? []) {
+        if (r.quantity <= 0) continue;
         const levels = await tx.stockLevel.findMany({ where: { storeId: order.storeId, productId: r.productId } });
+        if (levels.length === 0) continue;
+        levels.sort((a, b) => (a.warehouseId ? 0 : 1) - (b.warehouseId ? 0 : 1));
         let remaining = r.quantity;
         for (const lvl of levels) {
           if (remaining <= 0) break;
-          const updated = await tx.stockLevel.update({
-            where: { id: lvl.id },
-            data: { quantityReserved: { increment: remaining } },
-          });
-          await tx.stockMovement.create({
-            data: { storeId: order.storeId, productId: r.productId, warehouseId: lvl.warehouseId, delta: remaining, type: "RESERVE", orderId: o.id, createdBy: "checkout", balanceAfter: updated.quantityReserved },
-          });
-          remaining = 0;
+          const rows = await tx.$executeRawUnsafe(
+            'UPDATE "StockLevel" SET "quantityReserved" = "quantityReserved" + $2 WHERE "id" = $1 AND ("quantityOnHand" - "quantityReserved") >= $2',
+            lvl.id,
+            remaining,
+          );
+          if (rows === 1) {
+            const fresh = await tx.stockLevel.findUnique({ where: { id: lvl.id }, select: { quantityReserved: true } });
+            await tx.stockMovement.create({
+              data: { storeId: order.storeId, productId: r.productId, warehouseId: lvl.warehouseId, delta: remaining, type: "RESERVE", orderId: o.id, createdBy: "checkout", balanceAfter: fresh?.quantityReserved ?? null },
+            });
+            remaining = 0;
+          }
+        }
+        if (remaining > 0) {
+          throw new InsufficientStockError(r.productId, remaining);
         }
       }
-
       // 2) Convert the cart (guarded to OPEN — a concurrent retry is a no-op here)
       if (effects.cart) {
         await tx.cart.updateMany({
@@ -501,6 +522,24 @@ export class PrismaOrderRepository implements OrderRepository {
           },
         });
       }
+
+      // 6) Outbox (Module 9 fix): the notification event is written INSIDE this
+      //    transaction, so a committed order ALWAYS has its event — there is no
+      //    crash window where the order exists but the notification was never
+      //    enqueued. The worker drains it asynchronously with retries.
+      await tx.outboxEvent.create({
+        data: {
+          storeId: order.storeId,
+          aggregateType: "order",
+          aggregateId: o.id,
+          eventType: "order.received",
+          payload: {
+            orderNumber: o.orderNumber,
+            psid: null,
+            text: `Order ${o.orderNumber} received — total ${(order.totalMinor / 100).toFixed(2)} ${order.currencyCode}.`,
+          } as object,
+        },
+      });
 
       return o;
     }, { timeout: 30_000 });
