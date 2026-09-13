@@ -106,6 +106,28 @@ export default function OrdersPanel() {
   const [payHold, setPayHold] = useState<{ id: string; orderNumber: string; totalMinor: number; isDelivery: boolean } | null>(null);
   const [payMethod, setPayMethod] = useState<"cash" | "credit">("cash");
   const [tendered, setTendered] = useState("");
+  // M1: optional split-payment tender rows (method · amount · cash tendered · reference).
+  const [splitMode, setSplitMode] = useState(false);
+  const [tenderRows, setTenderRows] = useState<{ methodCode: string; amount: string; tendered: string; reference: string }[]>([]);
+  const [payMethods, setPayMethods] = useState<{ code: string; label: string; kind: string; requiresReference: boolean }[]>([]);
+  // M1: the store's tender methods (cash, gcash, utang …) for the split-payment rows.
+  useEffect(() => {
+    if (!payHold) return;
+    fetch(`${API_URL}/admin/payment-methods`, { headers: adminHeaders() })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d?.methods) setPayMethods(d.methods); })
+      .catch(() => { /* the modal still works with the legacy cash/utang inputs */ });
+  }, [payHold]);
+  // M1: live totals for the tender rows (server re-validates everything).
+  const splitTotals = (() => {
+    const sum = tenderRows.reduce((s, r) => s + Math.round(parseFloat(r.amount || "0") * 100), 0);
+    const change = tenderRows.reduce((s, r) => {
+      const applied = Math.round(parseFloat(r.amount || "0") * 100);
+      const handed = Math.round(parseFloat(r.tendered || "0") * 100);
+      return s + (handed > applied ? handed - applied : 0);
+    }, 0);
+    return { sum, change, remaining: (payHold?.totalMinor ?? 0) - sum };
+  })();
   const [startAt, setStartAt] = useState("");
   const [dueAt, setDueAt] = useState("");
   const [payCustomerId, setPayCustomerId] = useState("");
@@ -347,6 +369,29 @@ export default function OrdersPanel() {
     /** Validate payment inputs (cash cover / credit customer + signature). Returns true when good. */
     const payValidated = () => {
       if (!payHold) return false;
+      // M1: split mode validates the tender rows instead of the single-method inputs.
+      if (splitMode) {
+        const rows = tenderRows
+          .map((r) => ({ ...r, amountMinor: Math.round(parseFloat(r.amount || "0") * 100) }))
+          .filter((r) => r.methodCode && r.amountMinor > 0);
+        if (rows.length === 0) { setError("Add at least one tender"); return false; }
+        const sum = rows.reduce((s, r) => s + r.amountMinor, 0);
+        if (sum !== payHold.totalMinor) {
+          setError(sum > payHold.totalMinor
+            ? `Tenders exceed the total by ${toPesos(sum - payHold.totalMinor)}`
+            : `${toPesos(payHold.totalMinor - sum)} still unpaid`);
+          return false;
+        }
+        const hasCreditRow = rows.some((r) => payMethods.find((m) => m.code === r.methodCode)?.kind === "CREDIT");
+        if (hasCreditRow && !payCustomerId) { setError("Select a customer for the utang tender"); return false; }
+        if (hasCreditRow && !paySig) { setPaySigError(true); setError("Customer signature is required for the utang tender — please sign"); return false; }
+        const missingRef = rows.find((r) => {
+          const m = payMethods.find((x) => x.code === r.methodCode);
+          return m?.requiresReference && !r.reference.trim();
+        });
+        if (missingRef) { setError(`${payMethods.find((m) => m.code === missingRef.methodCode)?.label} needs a reference number`); return false; }
+        return true;
+      }
       const tenderedMinor = Math.round(parseFloat(tendered || "0") * 100);
       if (payMethod === "cash" && tenderedMinor < payHold.totalMinor) { setError("Tendered amount must cover the total"); return false; }
       if (payMethod === "credit" && !payCustomerId) { setError("Select a customer for utang"); return false; }
@@ -359,24 +404,47 @@ export default function OrdersPanel() {
       if (!payHold || !payValidated()) return;
       setError(null);
       const tenderedMinor = Math.round(parseFloat(tendered || "0") * 100);
+      // M1: in split mode the tender rows ARE the payment (multi-method, one request).
+      const splitRows = tenderRows
+        .map((r) => ({
+          methodCode: r.methodCode,
+          amountMinor: Math.round(parseFloat(r.amount || "0") * 100),
+          tenderedMinor: r.tendered ? Math.round(parseFloat(r.tendered) * 100) : undefined,
+          reference: r.reference.trim() || undefined,
+        }))
+        .filter((r) => r.methodCode && r.amountMinor > 0);
+      const splitHasCredit = tenderRows.some((r) => payMethods.find((m) => m.code === r.methodCode)?.kind === "CREDIT");
       const res = await fetch(`${API_URL}/admin/pos/holds/${payHold.id}/complete`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...adminHeaders() },
-        body: JSON.stringify({
-          paymentMethod: payMethod,
-          tenderedMinor: payMethod === "cash" ? tenderedMinor : undefined,
-          customerId: payMethod === "credit" ? payCustomerId : undefined,
-          signatureData: payMethod === "credit" ? paySig : undefined,
-          startAt: payMethod === "credit" ? (startAt || new Date().toISOString()) : undefined,
-          dueAt: payMethod === "credit" ? (dueAt || undefined) : undefined,
-          sendForDelivery: target === "OUT_FOR_DELIVERY",
-        }),
+        body: JSON.stringify(
+          splitMode
+            ? {
+                tenders: splitRows,
+                paymentMethod: splitHasCredit ? "credit" as const : "cash" as const, // kind summary for the server's signature rule
+                customerId: payCustomerId || undefined,
+                signatureData: splitHasCredit ? paySig : undefined,
+                startAt: splitHasCredit ? (startAt || new Date().toISOString()) : undefined,
+                dueAt: splitHasCredit ? (dueAt || undefined) : undefined,
+                sendForDelivery: target === "OUT_FOR_DELIVERY",
+              }
+            : {
+                paymentMethod: payMethod,
+                tenderedMinor: payMethod === "cash" ? tenderedMinor : undefined,
+                customerId: payMethod === "credit" ? payCustomerId : undefined,
+                signatureData: payMethod === "credit" ? paySig : undefined,
+                startAt: payMethod === "credit" ? (startAt || new Date().toISOString()) : undefined,
+                dueAt: payMethod === "credit" ? (dueAt || undefined) : undefined,
+                sendForDelivery: target === "OUT_FOR_DELIVERY",
+              },
+        ),
       });
       const d = await res.json();
       if (!res.ok) { setError(d?.message ?? "Complete failed"); return; }
       setPayHold(null);
       setDeliveryConfirm(null);
       setTendered(""); setStartAt(""); setDueAt(""); setPayCustomerId(""); setPaySig(null); setPaySigError(false);
+      setSplitMode(false); setTenderRows([]);
       toast(`${d.orderNumber} ${d.status === "OUT_FOR_DELIVERY" ? "paid — sent for delivery" : "completed"}` + (d.changeMinor ? ` · change ${toPesos(d.changeMinor)}` : ""));
       void load();
     };
@@ -841,6 +909,71 @@ export default function OrdersPanel() {
                     </>
                   )}
                 </div>
+                  <hr className="my-2" />
+                  {/* M1: split payment — several tenders settle one order (server re-validates) */}
+                  <div className="d-flex align-items-center justify-content-between">
+                    <div className="form-check form-switch">
+                      <input className="form-check-input" type="checkbox" id="splitPayToggle" checked={splitMode}
+                        onChange={(e) => {
+                          setSplitMode(e.target.checked);
+                          if (e.target.checked && tenderRows.length === 0 && payHold) {
+                            setTenderRows([{ methodCode: "cash", amount: (payHold.totalMinor / 100).toFixed(2), tendered: "", reference: "" }]);
+                          }
+                        }} />
+                      <label className="form-check-label small" htmlFor="splitPayToggle">Split payment (cash + gcash + utang)</label>
+                    </div>
+                    {splitMode && (
+                      <button type="button" className="btn btn-sm btn-outline-primary"
+                        onClick={() => setTenderRows((rows) => [...rows, { methodCode: payMethods[1]?.code ?? "cash", amount: "", tendered: "", reference: "" }])}>
+                        <i className="bi bi-plus-lg me-1"></i>Add tender
+                      </button>
+                    )}
+                  </div>
+                  {splitMode && (
+                    <div className="mt-2">
+                      {payMethods.length === 0 && <div className="small text-muted">Loading payment methods…</div>}
+                      {tenderRows.map((row, idx) => {
+                        const m = payMethods.find((x) => x.code === row.methodCode);
+                        return (
+                          <div key={idx} id={`tender-row-${idx}`} className="border rounded p-2 mb-2">
+                            <div className="d-flex gap-2 mb-1">
+                              <select className="form-select form-select-sm" value={row.methodCode}
+                                onChange={(e) => setTenderRows((rows) => rows.map((r, i) => (i === idx ? { ...r, methodCode: e.target.value } : r)))}>
+                                {payMethods.map((pm) => <option key={pm.code} value={pm.code}>{pm.label}</option>)}
+                              </select>
+                              <input className="form-control form-control-sm" type="number" min="0" step="0.01" placeholder="Amount"
+                                value={row.amount}
+                                onChange={(e) => setTenderRows((rows) => rows.map((r, i) => (i === idx ? { ...r, amount: e.target.value } : r)))} />
+                              {tenderRows.length > 1 && (
+                                <button type="button" className="btn btn-sm btn-outline-danger"
+                                  onClick={() => setTenderRows((rows) => rows.filter((_, i) => i !== idx))}>
+                                  <i className="bi bi-x-lg"></i>
+                                </button>
+                              )}
+                            </div>
+                            {m?.kind === "CASH" && (
+                              <input className="form-control form-control-sm mb-1" type="number" min="0" step="0.01" placeholder="Cash handed over (optional)"
+                                value={row.tendered}
+                                onChange={(e) => setTenderRows((rows) => rows.map((r, i) => (i === idx ? { ...r, tendered: e.target.value } : r)))} />
+                            )}
+                            {m?.requiresReference && (
+                              <input className="form-control form-control-sm" placeholder={`${m.label} reference`}
+                                value={row.reference}
+                                onChange={(e) => setTenderRows((rows) => rows.map((r, i) => (i === idx ? { ...r, reference: e.target.value } : r)))} />
+                            )}
+                          </div>
+                        );
+                      })}
+                      <div className="small d-flex justify-content-between">
+                        <span className={splitTotals.remaining === 0 ? "text-success" : "text-danger fw-semibold"}>
+                          {splitTotals.remaining === 0
+                            ? "Fully tendered"
+                            : splitTotals.remaining > 0 ? `Remaining ${toPesos(splitTotals.remaining)}` : `Over by ${toPesos(-splitTotals.remaining)}`}
+                        </span>
+                        {splitTotals.change > 0 && <span className="text-success">Change {toPesos(splitTotals.change)}</span>}
+                      </div>
+                    </div>
+                  )}
                 <div className="modal-footer">
                   <button className="btn btn-outline-secondary" onClick={() => setPayHold(null)}>Cancel</button>
                   <button className="btn btn-success" onClick={onPayComplete}>Complete</button>

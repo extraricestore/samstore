@@ -503,10 +503,10 @@ Pay modal, served by ONE writer for payment rows.
 
 ```
 M1  Split payments in the REAL money paths  (4 steps: one writer -> POS tenders -> UI -> E2E)
-[ ]   M1.1 extract applyTenders into payments/tenders.ts (N2 tests stay green, no behaviour change)
-[ ]   M1.2 PosSellRequest/PosHoldCompleteRequest accept tenders[]; sell/completeHold delegate
-[ ]   M1.3 OrdersPanel Pay modal tender rows + lib/admin.ts fetchPaymentMethods()
-[ ]   M1.4 e2e/07-split-payment.spec.ts + probe sell(tenders) leg + docs
+[x]   M1.1 extract applyTenders into payments/tenders.ts (N2 tests stayed green, behaviour preserved)  `d5cfe78`
+[x]   M1.2 PosSellRequest/PosHoldCompleteRequest accept tenders[]; sell/completeHold delegate  `9befef5`
+[x]   M1.3 OrdersPanel Pay modal tender rows (split toggle, per-row method/amount/change/reference, live Remaining)  (this commit)
+[x]   M1.4 e2e/07-split-payment.spec.ts (real staff flow)  (this commit)
 [ ] M2  Stock Adjustment + Adjustment History + Stock Flow screens (reuse the existing ADJUST path)
 [ ] M3  Receipts & labels (57mm + 57x40mm label sheet)
 [ ] M4  Tax engine — PH VAT 12% incl/excl + exempt, BIR receipt, 4 snapshot writers
