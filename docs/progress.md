@@ -22,7 +22,7 @@ Updated: 2026-09-11 · **Project hardening Modules 1–11 ALL COMPLETE + Playwri
 | **M8 unified fulfillment** | All delivery checks read the explicit `fulfillmentType` (single `isDeliveryOrder`); admin list/fulfillment facet filter on the enum | `0e68b4b` |
 | **M9 outbox worker** | `OutboxWorker` drains PENDING → PROCESSED (order.received → NotificationLog) with retries/backoff/FAILED; checkout enqueues after commit; started in main.ts | `301d135` |
 | **M10 a11y** | Pay/Delivery modals: `role=dialog`+`aria-modal`+`aria-labelledby`+labeled close; Escape closes any open modal | `7be4ab2` |
-| **M11 ops** | `/health` + `/health/ready`; `scripts/reconcile-stock.ts` (dry-run + `--apply`); `docs/runbooks.md` | `ecc8ef2` |
+| **M11 ops** | `/health` + `/health/ready`; `scripts/reconcile-stock.ts` (dry-run + `--apply`, superseded by `scripts/reconcile.ts` in the fix pass); `docs/runbooks.md` | `ecc8ef2` |
 
 ## Project hardening — Module 4: stock reservation & movement engine
 

@@ -49,17 +49,24 @@ curl http://localhost:4100/health        # liveness (no DB)
 curl http://localhost:4100/health/ready  # readiness (SELECT 1; 503 when degraded)
 ```
 
-## Stock reconciliation
+## Reconciliation
 
-The `StockMovement` ledger (Module 4) is the source of truth for every stock change since its introduction. Verify balances against it:
+Every stored BALANCE must equal its append-only LEDGER. One command checks all four identities and can repair them (dry-run by default, exit 1 on drift so it can gate a cron/deploy):
 
 ```bash
-npx tsx scripts/reconcile-stock.ts             # dry-run: reports DRIFT per product
-npx tsx scripts/reconcile-stock.ts --apply     # writes correction ADJUST movements + fixes balances
-npx tsx scripts/reconcile-stock.ts --store <storeId>
+npx tsx scripts/reconcile.ts                     # report drift (all stores)
+npx tsx scripts/reconcile.ts --apply             # correct drifted balances from the ledger
+npx tsx scripts/reconcile.ts --store <storeId>
 ```
 
-Levels with no movements predate the ledger and are skipped (cannot be validated this way).
+| Identity | Checked against |
+|---|---|
+| `Voucher.usedCount` | `count(VoucherRedemption)` |
+| `StoreCustomer.loyaltyBalancePoints` | `sum(LoyaltyEntry.points)` |
+| `StoreCustomer.creditBalanceMinor` | `sum(CreditEntry.amountMinor)` (+purchase / −payment) |
+| `StockLevel.quantityOnHand` | ledger-implied balance (first movement's balanceAfter − delta, plus all deltas) |
+
+Correction semantics: the ledger is authoritative, so the balance is rewritten TO the ledger and the correction is recorded as a **zero-delta `ADJUST` stock movement** (its note holds `onHand 7 → 5`). A non-zero delta would move the ledger sum and immediately break the identity again. Stock levels with no movements predate the ledger and are skipped.
 
 ## Order status / fulfillment
 
@@ -84,7 +91,7 @@ Levels with no movements predate the ledger and are skipped (cannot be validated
   `pg_dump "$DATABASE_URL" | gzip > backup-$(date +%F).sql.gz` (run from a machine with network access to the pooler; never log the connection string).
 - **Restore**: create a fresh database, `pg_dump`-restore, point `DATABASE_URL` at it, `prisma migrate deploy` (all migrations replay), smoke-test `/health/ready`.
 - **Migration rollback**: SAM STORE migrations are additive (expand → backfill → verify → contract). To roll back a bad forward migration: (1) keep the column/table but stop writing it, (2) backfill the old field from the new one, (3) drop the new constraint only after verification. Do NOT `migrate reset` against production.
-- **Incident flow**: 1) `/health/ready` — if degraded, check the pool (5s timeout → reduce concurrent work, e.g. stop background jobs), 2) check outbox backlog and failed events (`lastError`), 3) run `reconcile-stock` dry-run, 4) check `OutboxEvent`/`StockMovement` for drift, 5) only after evidence, `--apply`.
+- **Incident flow**: 1) `/health/ready` — if degraded, check the pool (connection limits → reduce concurrent work, e.g. stop background jobs), 2) check outbox backlog and failed events (`lastError`), 3) run `npx tsx scripts/reconcile.ts` (dry-run) to compare every balance against its ledger, 4) inspect `StockMovement` / `LoyaltyEntry` / `CreditEntry` / `VoucherRedemption` before deciding, 5) only after that evidence, `--apply`.
 - **Rollback of a deploy**: `git revert <bad-commit>` or checkout the previous `main`, rebuild web (kill → rm .next → build → start), restart API.
 
 ## Verification checklist after any change
