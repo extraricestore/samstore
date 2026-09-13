@@ -183,20 +183,13 @@ export class PrismaCartRepository implements CartRepository {
   }
 
   async addItem(cartId: string, storeId: string, productId: string, quantity: number, unitPriceMinor: number): Promise<void> {
-    await prisma.$transaction(async (tx) => {
-      const existing = await tx.cartItem.findUnique({
-        where: { cartId_productId: { cartId, productId } },
-      });
-      if (existing) {
-        await tx.cartItem.update({
-          where: { id: existing.id },
-          data: { quantity: existing.quantity + quantity },
-        });
-      } else {
-        await tx.cartItem.create({
-          data: { cartId, storeId, productId, quantity, unitPriceMinor },
-        });
-      }
+    // A single atomic upsert on the (cartId, productId) unique key. The previous
+    // find-then-create raced: two quick adds of the same product (double-tap, two tabs)
+    // made the second create violate the constraint → P2002 → HTTP 500 to the customer.
+    await prisma.cartItem.upsert({
+      where: { cartId_productId: { cartId, productId } },
+      update: { quantity: { increment: quantity } },
+      create: { cartId, storeId, productId, quantity, unitPriceMinor },
     });
   }
 

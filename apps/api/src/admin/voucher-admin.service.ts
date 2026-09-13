@@ -49,22 +49,29 @@ export class VoucherAdminService {
       return { ok: false, error: { type: "validation", errors: ["minOrderMinor must be a non-negative integer"] } };
     }
 
-    const existing = await prisma.voucher.findUnique({ where: { storeId_code: { storeId, code } } });
-    if (existing) return { ok: false, error: { type: "conflict", message: "Voucher code already exists" } };
-
-    const voucher = await prisma.voucher.create({
-      data: {
-        storeId,
-        code,
-        description: input.description?.trim() ?? null,
-        discountMinor: input.discountMinor,
-        minOrderMinor: input.minOrderMinor ?? 0,
-        maxRedemptions: input.maxRedemptions ?? null,
-        startsAt: input.startsAt ?? null,
-        expiresAt: input.expiresAt ?? null,
-      },
-    });
-    return { ok: true, value: { id: voucher.id } };
+    // Atomic on (storeId, code): a double-submitted create used to race the find-then-create
+    // and surface a raw P2002 as an HTTP 500. Same class as the cart-item race.
+    try {
+      const voucher = await prisma.voucher.create({
+        data: {
+          storeId,
+          code,
+          description: input.description?.trim() ?? null,
+          discountMinor: input.discountMinor,
+          minOrderMinor: input.minOrderMinor ?? 0,
+          maxRedemptions: input.maxRedemptions ?? null,
+          startsAt: input.startsAt ?? null,
+          expiresAt: input.expiresAt ?? null,
+        },
+      });
+      return { ok: true, value: { id: voucher.id } };
+    } catch (e) {
+      // P2002 = the code exists (or a concurrent create won) → a clean conflict, never a 500.
+      if (e && typeof e === "object" && (e as { code?: string }).code === "P2002") {
+        return { ok: false, error: { type: "conflict", message: "Voucher code already exists" } };
+      }
+      throw e;
+    }
   }
 
   async update(storeId: string, voucherId: string, input: Partial<VoucherInput>): Promise<AdminResult<{ id: string }>> {

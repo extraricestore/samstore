@@ -2,6 +2,7 @@ import { Controller, Get, Headers, HttpException, HttpStatus, Inject, Post, Body
 import { JwtAuthGuard, type AuthPrincipal } from "../auth/auth.guard.js";
 import { resolveTenant, TENANT_ROLES } from "../auth/tenant-context.js";
 import { prisma } from "../persistence/prisma-repositories.js";
+import { cacheBust, cacheGet, cacheKey, cacheSet } from "../persistence/ttl-cache.js";
 import { assertDto, STOCK_ADJUST_DTO } from "../security/validate.js";
 import { INVENTORY_SERVICE, InventoryService } from "./inventory.service.js";
 
@@ -32,10 +33,18 @@ export class InventoryController {
   ) {
     const user = req.user;
     const { storeId } = await resolveTenant(user, headerStoreId, TENANT_ROLES.ADMIN);
+    // The inventory list aggregates every product's stock levels (expensive) and the admin
+    // dashboard fires ~10 queries in parallel — a saturated Prisma pool turns that into 10s
+    // pool waits and 500s. A short store-scoped cache keeps the panel cheap; adjustments bust it.
+    const key = cacheKey("inventory", storeId, search ?? "", categoryId ?? "", warehouseId ?? "", status ?? "");
+    const hit = cacheGet<Record<string, unknown>>(key);
+    if (hit) return hit;
     const data = await this.inventorySvc.list(storeId, { search, categoryId, warehouseId, status });
     const warehouses = await prisma.warehouse.findMany({ where: { storeId }, select: { id: true, name: true, isDefault: true } });
     const categories = await prisma.category.findMany({ where: { storeId, isActive: true }, select: { id: true, name: true } });
-    return { ...data, warehouses, categories };
+    const payload = { ...data, warehouses, categories };
+    cacheSet(key, payload, 15_000);
+    return payload;
   }
 
   /** POST /admin/stock/adjust — reasoned stock adjustment (manager+). */
@@ -51,6 +60,7 @@ export class InventoryController {
     const dto = assertDto<{ productId: string; warehouseId?: string; delta?: number; setTo?: number; reason: string; allowNegative?: boolean }>(body ?? {}, STOCK_ADJUST_DTO);
     const result = await this.inventorySvc.adjust(storeId, user.sub, dto);
     if (!result.ok) throw new HttpException(result.error, statusFor(result.error));
+    cacheBust(cacheKey("inventory", storeId)); // the panel must not show the pre-adjust balance
     return result.value;
   }
 
