@@ -39,21 +39,32 @@ test("admin dashboard fits every viewport and is keyboard reachable", async ({ p
   for (const vp of VIEWPORTS) {
     await page.setViewportSize({ width: vp.width, height: vp.height });
     await page.goto("/admin/login");
-    // Keyboard-only path: focus the email field with Tab, type, and submit with Enter.
+    // Keyboard-only path: fill the form, submit with Enter (no mouse).
     await page.locator('input[type="email"]').fill(ADMIN_EMAIL);
     await page.locator('input[type="password"]').fill(ADMIN_PASSWORD);
-    await page.keyboard.press("Enter"); // submits the form without the mouse
+    await page.keyboard.press("Enter");
     await expect(page).toHaveURL(/\/admin\/dashboard/, { timeout: 25_000 });
 
-    await expect(page.locator("nav, .navbar").first()).toBeVisible({ timeout: 15_000 });
+    // The topbar is always present; the tenant sidebar is desktop-only and is
+    // replaced by a hamburger + drawer below the md breakpoint.
+    await expect(page.locator("nav.navbar").first()).toBeVisible({ timeout: 15_000 });
     const overflow = await overflowPx(page);
     expect(overflow, `${vp.name}: dashboard overflows horizontally by ${overflow}px`).toBeLessThanOrEqual(2);
 
-    // Tab must move focus to something interactive (no keyboard trap on the shell).
-    const before = await page.evaluate(() => document.activeElement?.tagName ?? "");
+    const mobileToggle = page.locator("button.d-md-none").first();
+    if (vp.width < 768) {
+      await expect(mobileToggle, `${vp.name}: the mobile nav toggle must be reachable`).toBeVisible();
+      await mobileToggle.click();
+      await expect(page.locator(".modal.fade.show.d-block")).toBeVisible();
+      await page.keyboard.press("Escape"); // keyboard-closable drawer
+    } else {
+      await expect(page.locator("aside").first(), `${vp.name}: the sidebar shows on md+`).toBeVisible();
+      await expect(mobileToggle).toBeHidden();
+    }
+
+    // Tab must move focus to a real element (no keyboard trap on the shell).
     await page.keyboard.press("Tab");
-    const after = await page.evaluate(() => `${document.activeElement?.tagName ?? ""}:${(document.activeElement as HTMLElement | null)?.getAttribute("type") ?? ""}`);
-    expect(before).not.toBe("");
-    expect(after).not.toBe(""); // focus moved to a real element
+    const active = await page.evaluate(() => document.activeElement?.tagName ?? "");
+    expect(["A", "BUTTON", "INPUT", "SELECT", "TEXTAREA", "BODY"]).toContain(active);
   }
 });
