@@ -45,20 +45,20 @@ test("POS shift bar: open → X-report → close with a counted amount", async (
 
   // 3. X-report opens and shows the drawer report.
   await page.getByRole("button", { name: "X-report" }).click();
-  await expect(page.getByText("Cash drawer report")).toBeVisible();
+  await expect(page.getByText("Cash drawer report")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText(/Expected in drawer/i)).toBeVisible();
   await page.locator(".modal-footer").getByRole("button", { name: "Close", exact: true }).click();
 
   // 4. Close the shift with the expected amount → the Z-report appears with zero variance.
   await page.getByRole("button", { name: "Close shift" }).click();
-  await expect(page.getByText(/Variance:/i)).toBeVisible();
+  await expect(page.getByText(/Variance:/i)).toBeVisible({ timeout: 30_000 });
   await page.getByRole("button", { name: /Close & print Z-report/ }).click();
-  await expect(page.getByText(/Z-report \(shift close\)/i)).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByText("Variance")).toBeVisible();
+  await expect(page.getByText(/Z-report \(shift close\)/i)).toBeVisible({ timeout: 40_000 }); // the modal renders after the close POST (remote DB)
+  await expect(page.getByText("Variance")).toBeVisible({ timeout: 30_000 });
   await page.locator(".modal-footer").getByRole("button", { name: "Close", exact: true }).click();
 
   // 5. The drawer is closed again.
-  await expect(page.getByText(/No shift open/i)).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/No shift open/i)).toBeVisible({ timeout: 30_000 });
 
   // Server truth: the shift is CLOSED with a recorded variance.
   const after = await request.get(`${API}/admin/registers/sessions`, { headers: { Authorization: `Bearer ${token}` } });
