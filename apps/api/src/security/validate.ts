@@ -234,3 +234,29 @@ export const CHANGE_PASSWORD_DTO: ObjectRule = {
     newPassword: { kind: "string", required: true, min: 8, max: 200, trim: false },
   },
 };
+
+// ── N1: cash drawer / shifts ──────────────────────────────────────────────────
+export const OPEN_SHIFT_DTO: ObjectRule = {
+  kind: "object",
+  fields: {
+    openingFloatMinor: { kind: "int", min: 0, max: 100_000_000 },
+    notes: { kind: "string", max: 300 },
+  },
+};
+
+export const CASH_MOVEMENT_DTO: ObjectRule = {
+  kind: "object",
+  fields: {
+    type: { kind: "string", required: true, values: ["FLOAT", "CASH_IN", "CASH_OUT", "REFUND"] },
+    amountMinor: { kind: "int", required: true, min: 1, max: 100_000_000 },
+    reason: { kind: "string", max: 300 },
+  },
+};
+
+export const CLOSE_SHIFT_DTO: ObjectRule = {
+  kind: "object",
+  fields: {
+    countedMinor: { kind: "int", required: true, min: 0, max: 1_000_000_000 },
+    notes: { kind: "string", max: 300 },
+  },
+};

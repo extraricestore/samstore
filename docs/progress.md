@@ -1,6 +1,12 @@
 # SAM STORE — Progress Log
 
-Updated: 2026-09-13 · **Hardening Modules 1–11 + audit remediation (fixes 1–5) + Playwright E2E** · Active model: `deepseek/deepseek-v4.1-flash` (openrouter)
+Updated: 2026-09-13 · **Hardening 1–11 + audit remediation + N1 cash drawer** · Active model: `deepseek/deepseek-v4.1-flash` (openrouter)
+
+## NexoPOS-inspired upgrade (prompt: `prompts/nexopos-inspired-counter-upgrade-v1.md`)
+
+| Mod | Summary | Commit |
+|---|---|---|
+| **N1 cash drawer & shifts** | `Register` + `RegisterSession` + append-only `CashMovement` (tenant-consistent composite FKs); one open shift per store enforced by a **partial unique index**; derived expected cash (float + cash-in − cash-out + tenders − refunds); guarded close (no double-close) storing counted/expected/variance; X/Z reports; counter **cash** sales blocked without a shift (`requireOpenShift`, default on for app-created stores) and bound to the shift on both the order and the tender; POS register bar + cash-in/out + close-with-variance + printable 57mm report; `POST/GET /admin/registers*` with DTO validation and tenant guard | (this commit) |
 
 ## Audit remediation (re-verified the 11 modules against the prompt's bullets)
 

@@ -21,6 +21,8 @@ import { LoyaltyService, LOYALTY_SERVICE } from "./loyalty/loyalty.service.js";
 import { NotificationsService, NOTIFICATIONS_SERVICE } from "./notifications/notifications.service.js";
 import { PosService, POS_SERVICE } from "./pos/pos.service.js";
 import { PosController } from "./pos/pos.controller.js";
+import { RegisterController } from "./registers/register.controller.js";
+import { RegisterService, REGISTER_SERVICE } from "./registers/register.service.js";
 import { PaymentsService, PAYMENTS_SERVICE } from "./payments/payments.service.js";
 import { PaymentsController } from "./payments/payments.controller.js";
 import { CreditService, CREDIT_SERVICE } from "./credit/credit.service.js";
@@ -48,7 +50,7 @@ import {
 const CLAIM_SECRET = process.env.CLAIM_SIGNING_SECRET ?? "dev-only-in-memory-secret-0123456789";
 
 @Module({
-  controllers: [CheckoutController, PublicStoreController, CartController, AuthController, AdminController, OrderLookupController, CustomerAuthController, PosController, PaymentsController, CreditController, ExpensesController, PurchasesController, InventoryController, ReportsController, DeliveryController, HealthController],
+  controllers: [CheckoutController, PublicStoreController, CartController, AuthController, AdminController, OrderLookupController, CustomerAuthController, PosController, PaymentsController, CreditController, ExpensesController, PurchasesController, InventoryController, ReportsController, DeliveryController, HealthController, RegisterController],
   providers: [
     {
       provide: DELIVERY_SERVICE,
@@ -80,7 +82,12 @@ const CLAIM_SECRET = process.env.CLAIM_SIGNING_SECRET ?? "dev-only-in-memory-sec
     },
     {
       provide: POS_SERVICE,
-      useFactory: () => new PosService(new LoyaltyService()),
+      useFactory: (registers: RegisterService) => new PosService(new LoyaltyService(), registers),
+      inject: [REGISTER_SERVICE],
+    },
+    {
+      provide: REGISTER_SERVICE,
+      useFactory: () => new RegisterService(),
     },
     {
       provide: CUSTOMER_AUTH_SERVICE,

@@ -54,3 +54,46 @@ body {
 .hero h1 {
   text-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
 }
+
+/* N1 — cash drawer report: print only the report body (57mm thermal roll friendly).
+   A cashier prints the X/Z report straight from the modal; everything else on the
+   page (nav, buttons, modal chrome) is hidden in print. */
+.register-report {
+  font-variant-numeric: tabular-nums;
+}
+
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  .register-report,
+  .register-report * {
+    visibility: visible;
+  }
+  .register-report {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 57mm;
+    max-width: 57mm;
+    font-family: ui-monospace, "Courier New", monospace;
+    font-size: 11px;
+    color: #000;
+  }
+  .register-report table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .register-report table td {
+    padding: 1px 0;
+    border: 0;
+  }
+  .register-report .text-muted {
+    color: #333 !important;
+  }
+}
+
+@page {
+  size: 57mm auto;
+  margin: 3mm;
+}

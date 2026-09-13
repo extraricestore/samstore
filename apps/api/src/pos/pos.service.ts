@@ -8,6 +8,7 @@
 import { prisma } from "../persistence/prisma-repositories.js";
 import { cacheBust, cacheKey } from "../persistence/ttl-cache.js";
 import { deductStock, restoreStock as restoreStockLedger } from "../domain/movements.js";
+import { RegisterService } from "../registers/register.service.js";
 import { PrismaOrderSequenceRepository } from "../persistence/prisma-repositories.js";
 import { computeOrderTotals } from "../domain/pricing.js";
 import { formatOrderNumber } from "../domain/order-number.js";
@@ -26,7 +27,7 @@ export class PosService {
   private readonly sequences = new PrismaOrderSequenceRepository();
   private readonly credit = new CreditService();
 
-  constructor(private readonly loyalty: LoyaltyService) {}
+  constructor(private readonly loyalty: LoyaltyService, private readonly registers: RegisterService = new RegisterService()) {}
 
   // ─── shared helpers ───────────────────────────────────────────────────────────────
 
@@ -126,6 +127,7 @@ export class PosService {
     source?: string; discountMinor?: number; totalMinor?: number;
     signatureData?: string | null; signatureAt?: Date | null;
     preorder?: { startAt: string; dueAt: string | null } | null;
+    registerSessionId?: string | null; // N1: cash drawer shift this counter sale belongs to
   }) {
     const discountMinor = data.discountMinor ?? 0;
     const finalTotal = data.totalMinor ?? Math.max(0, data.totals.totalMinor - discountMinor);
@@ -151,6 +153,7 @@ export class PosService {
         deliveryAddressLine1: "", storeCustomerId: data.storeCustomerId,
         fulfillmentType: "PICKUP", // M3: POS orders are counter/pickup at creation (delivery conversion flips it)
         signatureData: data.signatureData ?? null, signatureAt,
+        registerSessionId: data.registerSessionId ?? null, // N1
       },
     });
     await tx.orderItem.createMany({
@@ -179,6 +182,15 @@ export class PosService {
     const { storeCustomerId: custId, displayName } = await this.resolveCustomer(storeId, input);
     if (input.paymentMethod === "credit" && !custId) {
       return { ok: false, error: { type: "validation", errors: ["Credit sales require a linked customer"] } };
+    }
+
+    // N1: a counter CASH sale must belong to an open drawer shift (store setting
+    // requireOpenShift, default on). Credit sales do not touch the drawer.
+    let registerSessionId: string | null = null;
+    if (input.paymentMethod === "cash") {
+      const session = await this.registers.requireOpenSession(storeId);
+      if (!session.ok) return { ok: false, error: { type: "conflict", message: session.error.message } };
+      registerSessionId = session.value;
     }
 
     // v4: utang sales require a captured signature (data-URL PNG).
@@ -220,13 +232,14 @@ export class PosService {
         currencyCode: store.currencyCode, totals, storeCustomerId: custId, customerName: displayName, lines,
         discountMinor, totalMinor: finalTotal,
         signatureData: input.paymentMethod === "credit" ? input.signatureData : null,
+        registerSessionId,
       });
       if (input.paymentMethod === "cash") {
         const tendered = input.tenderedMinor ?? finalTotal;
         if (tendered < finalTotal) throw new Error("Tendered amount is less than the total");
         changeMinor = tendered - finalTotal;
         await tx.payment.create({
-          data: { orderId: id, storeId, method: "cash", amountMinor: finalTotal, changeMinor, type: "payment", createdBy: actorId, note: "POS cash sale" },
+          data: { orderId: id, storeId, method: "cash", amountMinor: finalTotal, changeMinor, type: "payment", createdBy: actorId, note: "POS cash sale", registerSessionId },
         });
       } else {
         const cr = await this.credit.sellOnCredit(tx as never, storeId, custId!, id, finalTotal, actorId, { startAt: input.startAt, dueAt: input.dueAt });
@@ -488,6 +501,14 @@ export class PosService {
       return { ok: false, error: { type: "validation", errors: ["Signature is required for credit sales"] } };
     }
 
+    // N1: completing a hold with CASH draws from the drawer → needs an open shift.
+    let registerSessionId: string | null = null;
+    if (input.paymentMethod === "cash") {
+      const session = await this.registers.requireOpenSession(storeId);
+      if (!session.ok) return { ok: false, error: { type: "conflict", message: session.error.message } };
+      registerSessionId = session.value;
+    }
+
     // v4: loyalty redemption — credit sales with a linked customer only (checkout pattern).
     let discountMinor = 0;
     let loyaltyRedeemed = 0;
@@ -517,7 +538,7 @@ export class PosService {
         if (tendered < finalTotal) throw new Error("Tendered amount is less than the total");
         changeMinor = tendered - finalTotal;
         await tx.payment.create({
-          data: { orderId: holdId, storeId, method: "cash", amountMinor: finalTotal, changeMinor, type: "payment", createdBy: actorId, note: "POS cash sale (held)" },
+          data: { orderId: holdId, storeId, method: "cash", amountMinor: finalTotal, changeMinor, type: "payment", createdBy: actorId, note: "POS cash sale (held)", registerSessionId },
         });
       } else {
         const cr = await this.credit.sellOnCredit(tx as never, storeId, custId!, holdId, finalTotal, actorId, { startAt: input.startAt, dueAt: input.dueAt });
@@ -544,6 +565,7 @@ export class PosService {
           ...(input.paymentMethod === "credit"
             ? { signatureData: input.signatureData, signatureAt }
             : {}),
+          ...(registerSessionId ? { registerSessionId } : {}),
           snapshot: {
             ...(cur?.snapshot && typeof cur.snapshot === "object" ? cur.snapshot as Record<string, unknown> : {}),
             ...(input.paymentMethod === "credit" && input.signatureData ? { signature: { capturedAt: signatureAt.toISOString() } } : {}),

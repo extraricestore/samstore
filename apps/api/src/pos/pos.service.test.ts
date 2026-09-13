@@ -39,7 +39,10 @@ async function makeFixture() {
   const storeId = `posx_${tag}`;
   const productId = randomId();
   await prisma.store.create({ data: { id: storeId, slug: `posx-${tag}`, name: "POS Test Store" } });
-  await prisma.storeSettings.create({ data: { storeId, creditLimitMinor: 500000, creditTermDays: 30 } });
+  // N1: these tests exercise the sale plumbing, not the cash-drawer gate — opt out
+  // explicitly. The gate itself is covered by the dedicated test below and by
+  // registers/register.service.test.ts.
+  await prisma.storeSettings.create({ data: { storeId, creditLimitMinor: 500000, creditTermDays: 30, requireOpenShift: false } });
   const customer = await prisma.customer.create({
     data: { name: `POS Test Customer ${tag}`, phone: null, email: null, passwordHash: null },
   });
@@ -518,6 +521,67 @@ test("completeHold sendForDelivery: delivery-tagged order → OUT_FOR_DELIVERY w
     const row2 = await prisma.order.findUnique({ where: { id: hold2Id } });
     assert.equal(row2?.status, "COMPLETED"); // pickup ignores sendForDelivery
   } finally {
+    await cleanupFixture(fx.storeId, fx.customerId);
+  }
+});
+
+test("N1: a cash sale is blocked without an open shift, and the sale records the shift once opened", async () => {
+  const fx = await makeFixture();
+  try {
+    // Opt this store INTO the shift requirement (the shared fixture opts out).
+    await prisma.storeSettings.update({ where: { storeId: fx.storeId }, data: { requireOpenShift: true } });
+
+    const blocked = await svc.sell(fx.storeId, "actorX", {
+      items: [{ productId: fx.productId, quantity: 1 }],
+      paymentMethod: "cash",
+      tenderedMinor: 10000,
+    });
+    assert.equal(blocked.ok, false, "no open shift → no cash sale");
+    if (!blocked.ok) {
+      assert.equal(blocked.error.type, "conflict");
+      assert.ok(JSON.stringify(blocked.error).includes("open shift"));
+    }
+    assert.equal(await fixtureOrderCount(fx.storeId), 0, "the blocked sale wrote nothing");
+
+    // Credit sales never touch the drawer → still allowed while the drawer is closed.
+    const creditOk = await svc.sell(fx.storeId, "actorX", {
+      customerId: fx.storeCustomerId,
+      items: [{ productId: fx.productId, quantity: 1 }],
+      paymentMethod: "credit",
+      signatureData: "data:image/png;base64," + "A".repeat(40),
+    });
+    assert.equal(creditOk.ok, true, "credit sale does not need the drawer");
+    if (!creditOk.ok) return;
+
+    // Open the drawer → the same cash sale now succeeds and is linked to the shift.
+    const { RegisterService } = await import("../registers/register.service.js");
+    const registers = new RegisterService();
+    const opened = await registers.openSession(fx.storeId, "actorX", { openingFloatMinor: 0 });
+    assert.equal(opened.ok, true, JSON.stringify(opened));
+    const sessionId = opened.ok ? opened.value.sessionId : "";
+
+    const cash = await svc.sell(fx.storeId, "actorX", {
+      items: [{ productId: fx.productId, quantity: 1 }],
+      paymentMethod: "cash",
+      tenderedMinor: 10000,
+    });
+    assert.equal(cash.ok, true, JSON.stringify(cash));
+    if (!cash.ok) return;
+
+    const order = await prisma.order.findUnique({ where: { id: cash.value.orderId }, select: { registerSessionId: true } });
+    assert.equal(order?.registerSessionId, sessionId, "the counter sale is bound to the open shift");
+    const payment = await prisma.payment.findFirst({ where: { orderId: cash.value.orderId }, select: { registerSessionId: true, method: true, amountMinor: true } });
+    assert.equal(payment?.registerSessionId, sessionId, "the cash tender is bound to the shift");
+    assert.equal(payment?.method, "cash");
+
+    // …and the drawer report sees it.
+    const summary = await registers.currentSession(fx.storeId);
+    assert.equal(summary?.live.cashSalesMinor, 10000);
+    assert.equal(summary?.live.expectedMinor, 10000);
+  } finally {
+    await prisma.cashMovement.deleteMany({ where: { storeId: fx.storeId } });
+    await prisma.registerSession.deleteMany({ where: { storeId: fx.storeId } });
+    await prisma.register.deleteMany({ where: { storeId: fx.storeId } });
     await cleanupFixture(fx.storeId, fx.customerId);
   }
 });

@@ -75,6 +75,42 @@ Logs deliberately contain **no query string** — public links carry their acces
 there — and never bodies, signatures, phone numbers or addresses. When chasing an
 incident, grep by `requestId`.
 
+## Cash drawer & shifts (N1)
+
+One register per store; a **shift** is one cashier's session on it. Balances are derived
+from the ledger — never stored as a mutable total.
+
+```bash
+# the open shift + live drawer totals
+curl -H "Authorization: Bearer $TOKEN" -H "X-Store-Id: $STORE" http://localhost:4100/admin/registers/current
+
+# open (opening float in minor units) / move cash / close
+curl -X POST ... /admin/registers/open      -d '{"openingFloatMinor": 50000}'
+curl -X POST ... /admin/registers/movements -d '{"type":"CASH_OUT","amountMinor":10000,"reason":"bank drop"}'
+curl -X POST ... /admin/registers/close     -d '{"countedMinor": 69500,"notes":"short"}'
+
+# reports (X = mid-shift, Z = closed shift)
+curl ... "/admin/registers/report?kind=x"
+curl ... "/admin/registers/report?kind=z&sessionId=<id>"
+```
+
+**Expected cash** = opening float + cash-in − cash-out + cash tenders − cash refunds.
+FLOAT is the opening float (not double-counted); credit/e-wallet tenders are reported but
+stay out of the drawer. A **close is a guarded single-statement write**, so two concurrent
+closes cannot both succeed, and a closed shift rejects further movements.
+
+**One open shift per store** is enforced by a partial unique index
+(`RegisterSession_one_open_per_store`), so a concurrent double-open loses on the constraint
+instead of creating two drawers.
+
+`StoreSettings.requireOpenShift` (default **true** for stores created through the app)
+blocks counter **cash** sales while the drawer is closed — credit sales never need a shift.
+Stores with no settings row keep the previous behaviour (no gate). The POS panel shows the
+shift bar; the payment step disables **Cash** when the drawer is closed.
+
+Printing: the X/Z report prints on the **57 mm** roll (`@page { size: 57mm auto }`, body
+hidden in print except `.register-report`).
+
 ## Reconciliation
 
 Every stored BALANCE must equal its append-only LEDGER. One command checks all four identities and can repair them (dry-run by default, exit 1 on drift so it can gate a cron/deploy):

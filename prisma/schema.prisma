@@ -161,6 +161,9 @@ model Store {
   auditLogs      AuditLog[]
   vouchers       Voucher[]
   loyaltyEntries LoyaltyEntry[]
+  registers        Register[] // N1: cash drawer registers (one per store today)
+  registerSessions RegisterSession[]
+  cashMovements    CashMovement[]
   notifications  NotificationLog[]
   warehouses     Warehouse[]
   stockTransfers StockTransfer[]
@@ -190,6 +193,7 @@ model StoreSettings {
   receiptHeader            String? // P11: printed at top of receipts
   receiptFooter            String? // P11: printed at bottom
   showVatLabel             Boolean  @default(true) // P11: display-only VAT note (decision #2)
+  requireOpenShift         Boolean  @default(true) // N1: counter cash sales require an open register shift
   dailySalesTargetMinor    Int      @default(0) // Overview: daily sales target (0 = off)
   hidePricePreOrder        Boolean  @default(false) // Hide per-product prices in Pre Orders screen
   closedStoreMessage       String?
@@ -408,9 +412,87 @@ model Payment {
   createdBy   String? // actor user id
   signatureData String? // v4: finger-drawn signature (data-URL PNG) for utang collections
   signatureAt   DateTime? // v4: when the signature was captured
+  registerSessionId String? // N1: cash drawer shift this tender belongs to (null = off-counter)
+  registerSession   RegisterSession? @relation(fields: [registerSessionId], references: [id])
 
   @@index([storeId, receivedAt])
   @@index([orderId])
+  @@index([registerSessionId])
+}
+
+// ──────────────────────────── Cash drawer / shifts (N1) ────────────────────────────
+// One physical drawer per store today (operator decision): a Register is the device,
+// a RegisterSession is one cashier's shift on it. Balances are DERIVED from the
+// append-only movement + payment rows — never stored as a mutable total.
+
+enum RegisterStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum RegisterSessionStatus {
+  OPEN
+  CLOSED
+}
+
+enum CashMovementType {
+  FLOAT // opening float (recorded at open, informational)
+  CASH_IN // cash added to the drawer (owner drop-in, change fund top-up)
+  CASH_OUT // cash removed (bank drop, petty cash, expense paid from the drawer)
+  REFUND // cash refunded to a customer
+}
+
+model Register {
+  id        String         @id @default(cuid())
+  storeId   String
+  store     Store          @relation(fields: [storeId], references: [id])
+  name      String         @default("Main counter")
+  status    RegisterStatus @default(ACTIVE)
+  createdAt DateTime       @default(now())
+  sessions  RegisterSession[]
+
+  @@unique([storeId, id]) // M3: composite target so children can be tenant-consistent
+  @@index([storeId])
+}
+
+model RegisterSession {
+  id                String                @id @default(cuid())
+  storeId           String
+  store             Store                 @relation(fields: [storeId], references: [id])
+  registerId        String
+  register          Register              @relation(fields: [storeId, registerId], references: [storeId, id])
+  status            RegisterSessionStatus @default(OPEN)
+  openedBy          String
+  openedAt          DateTime              @default(now())
+  openingFloatMinor Int                   @default(0)
+  closedBy          String?
+  closedAt          DateTime?
+  countedMinor      Int? // cash the cashier counted at close
+  expectedMinor     Int? // computed at close (opening float + cash in − cash out + cash sales − cash refunds)
+  varianceMinor     Int? // countedMinor − expectedMinor (negative = short)
+  notes             String?
+  movements         CashMovement[]
+  payments          Payment[] // N1: every tender recorded against this shift
+  orders            Order[] // N1: counter sales opened during this shift
+
+  @@unique([storeId, id]) // M3: composite target for tenant-consistent children
+  @@index([storeId, status])
+  @@index([storeId, openedAt])
+}
+
+model CashMovement {
+  id          String           @id @default(cuid())
+  storeId     String
+  store       Store            @relation(fields: [storeId], references: [id])
+  sessionId   String
+  session     RegisterSession  @relation(fields: [storeId, sessionId], references: [storeId, id])
+  type        CashMovementType
+  amountMinor Int // always POSITIVE; the type decides the sign
+  reason      String?
+  createdBy   String
+  createdAt   DateTime         @default(now())
+
+  @@index([storeId, sessionId, createdAt])
 }
 
 // ─────────────────────────────── Expenses ───────────────────────────────
@@ -568,6 +650,8 @@ model Order {
   storeCustomerId String? // linked customer account (optional, guests = null)
   storeCustomer   StoreCustomer?       @relation(fields: [storeCustomerId], references: [id])
   loyaltyEntries  LoyaltyEntry[]
+  registerSessionId String? // N1: the cash drawer shift this counter sale belongs to (null = online/off-counter)
+  registerSession   RegisterSession? @relation(fields: [registerSessionId], references: [id])
 
   @@index([storeId, status, createdAt])
   @@unique([storeId, id]) // M3: composite target for tenant-consistent children
