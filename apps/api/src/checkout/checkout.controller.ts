@@ -1,6 +1,7 @@
 import { Body, Controller, HttpException, HttpStatus, Inject, Post } from "@nestjs/common";
 import type { CheckoutRequest, CheckoutResponse, ApiError } from "@sam-store/contracts";
 import { CHECKOUT_SERVICE, CheckoutService } from "./checkout.service.js";
+import { assertDto, CHECKOUT_DTO } from "../security/validate.js";
 
 // Public-facing routes. The storefront calls these from the canonical public link.
 // Rate limiting is added at the gateway layer once Redis is wired (AGENTS.md: public link).
@@ -37,7 +38,10 @@ export class CheckoutController {
    */
   @Post("checkout")
   async checkout(@Body() body: CheckoutRequest): Promise<CheckoutResponse> {
-    const result = await this.checkoutService.checkout(body);
+    // Module 2 fix: the untrusted checkout body is shape-validated BEFORE any
+    // domain work (types, enums, bounds, unknown keys rejected) → 422 not 500.
+    const dto = assertDto<CheckoutRequest>(body, CHECKOUT_DTO);
+    const result = await this.checkoutService.checkout(dto);
     if (!result.ok) {
       throw new HttpException(result.error, httpStatusFor(result.error));
     }

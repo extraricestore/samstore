@@ -8,6 +8,7 @@ import {
 } from "@nestjs/common";
 import type { ApiError } from "@sam-store/contracts";
 import { AuthService, AUTH_SERVICE } from "./auth.service.js";
+import { assertDto, CHANGE_PASSWORD_DTO, LOGIN_DTO, REGISTER_DTO } from "../security/validate.js";
 
 function statusFor(error: ApiError): HttpStatus {
   switch (error.type) {
@@ -40,7 +41,10 @@ export class AuthController {
   async register(
     @Body() body: { email: string; password: string; name?: string },
   ) {
-    const r = await this.auth.register(body);
+    // Module 2 fix: shape-validate the untrusted body (unknown keys rejected — a
+    // client-supplied storeId/role is a 422, not a silently ignored extra field).
+    const dto = assertDto<{ email: string; password: string; name?: string }>(body, REGISTER_DTO);
+    const r = await this.auth.register(dto);
     if (!r.ok) throw new HttpException(r.error, statusFor(r.error));
     return r.value;
   }
@@ -48,7 +52,8 @@ export class AuthController {
   /** POST /auth/login — exchange credentials for a JWT */
   @Post("login")
   async login(@Body() body: { email: string; password: string }) {
-    const r = await this.auth.login(body);
+    const dto = assertDto<{ email: string; password: string }>(body, LOGIN_DTO);
+    const r = await this.auth.login(dto);
     if (!r.ok) throw new HttpException(r.error, statusFor(r.error));
     return r.value;
   }
@@ -57,10 +62,11 @@ export class AuthController {
    *  so they prove their current (temp) password to set a new one + receive a fresh JWT. */
   @Post("change-password")
   async changePassword(@Body() body: { email: string; currentPassword: string; newPassword: string }) {
+    const dto = assertDto<{ email: string; currentPassword: string; newPassword: string }>(body, CHANGE_PASSWORD_DTO);
     const r = await this.auth.changePassword({
-      email: (body?.email ?? "").trim().toLowerCase(),
-      currentPassword: body?.currentPassword ?? "",
-      newPassword: body?.newPassword ?? "",
+      email: dto.email.trim().toLowerCase(),
+      currentPassword: dto.currentPassword,
+      newPassword: dto.newPassword,
     });
     if (!r.ok) throw new HttpException(r.error, statusFor(r.error));
     return r.value;

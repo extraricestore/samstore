@@ -1,5 +1,6 @@
 import { Body, Controller, HttpException, HttpStatus, Inject, Post } from "@nestjs/common";
 import { OrderLookupService, ORDER_LOOKUP_SERVICE } from "./order-lookup.service.js";
+import { assertDto, CLAIM_DTO } from "../security/validate.js";
 
 // Public order tracking — a guest uses the single-use signed claim link to view their order.
 
@@ -13,10 +14,8 @@ export class OrderLookupController {
   /** POST /public/orders/claim — exchange the claim token for the order view (single-use). */
   @Post("orders/claim")
   async claimOrder(@Body() body: { claimToken: string }) {
-    if (!body?.claimToken) {
-      throw new HttpException({ type: "validation", message: "claimToken is required" }, HttpStatus.UNPROCESSABLE_ENTITY);
-    }
-    const result = await this.lookup.claimOrder(body.claimToken);
+    const dto = assertDto<{ claimToken: string }>(body, CLAIM_DTO);
+    const result = await this.lookup.claimOrder(dto.claimToken);
     if (!result.ok) {
       const status = result.error.type === "unauthorized"
         ? HttpStatus.UNAUTHORIZED

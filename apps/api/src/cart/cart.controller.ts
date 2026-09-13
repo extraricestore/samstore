@@ -12,6 +12,7 @@ import {
 import type { ApiError } from "@sam-store/contracts";
 import { CartService, CART_SERVICE } from "./cart.service.js";
 import { Inject } from "@nestjs/common";
+import { assertDto, CART_ADD_DTO, CART_QTY_DTO } from "../security/validate.js";
 
 function statusFor(error: ApiError): HttpStatus {
   switch (error.type) {
@@ -55,7 +56,8 @@ export class CartController {
   /** POST /public/carts/:token/items — add a product (binds store on first add) */
   @Post(":token/items")
   async add(@Param("token") token: string, @Body() body: { productId: string; quantity: number }) {
-    const r = await this.carts.addItem(token, body.productId, body.quantity);
+    const dto = assertDto<{ productId: string; quantity: number }>(body, CART_ADD_DTO);
+    const r = await this.carts.addItem(token, dto.productId, dto.quantity);
     if (!r.ok) throw new HttpException(r.error, statusFor(r.error));
     return r.value;
   }
@@ -67,7 +69,8 @@ export class CartController {
     @Param("productId") productId: string,
     @Body() body: { quantity: number },
   ) {
-    const r = await this.carts.updateQuantity(token, productId, body.quantity);
+    const dto = assertDto<{ quantity: number }>(body, CART_QTY_DTO);
+    const r = await this.carts.updateQuantity(token, productId, dto.quantity);
     if (!r.ok) throw new HttpException(r.error, statusFor(r.error));
     return r.value;
   }
