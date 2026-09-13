@@ -194,7 +194,7 @@ Ranking = value ÷ (token cost + risk). Token cost uses §1.3 (S/M/L).
 
 | # | Suggestion | Why now | Size | Tokens |
 |---|---|---|---|---|
-| P0.1 | **N2 UI: tender rows in POS + Orders Pay** (live remaining / change / reference per method) | N2 is API-only; the operator can't use split payments yet | M | 150–220K |
+| P0.1 | **Split payments in the real money paths** — POS `sell` + hold-complete accept a tender list, Orders Pay modal gets tender rows (see M1, §5: the N2 endpoint has no UI caller) | N2 is API-only; the operator can't use split payments yet | L (4 steps) | 180–260K |
 | P0.2 | **Stock Adjustment + Adjustment History + Stock Flow Records screens** (NexoPOS Inventory flow) | ledger exists (`StockMovement`), UI missing — closes the biggest Manage gap with zero schema risk | M | 150–200K |
 | P0.3 | **N6 receipts & labels** (57 mm receipt CSS is already there from N1; add the label sheet) | pairs with P0.2, operator explicitly wants printing | M | 130–190K |
 | P0.4 | **Finish the risk list**: reconcile + fixture cleanup apply, ESLint config, managed-Redis decision | small, removes recurring confusion (drifted dev DB already caused a false alarm) | S | 60–100K |
@@ -230,35 +230,130 @@ customer-facing self-registration.
 
 ---
 
+## 4.5 Verified constraints (checked against the code — do not re-derive)
+
+These were read out of the source on 2026-09-13 while planning. They change some of the
+module designs below, so re-check only if you touch the same area.
+
+**Money paths (decisive for M1).**
+- The Pay button in `OrdersPanel.tsx` calls **`POST /admin/pos/holds/:id/complete`**
+  (~line 362), *not* `/admin/orders/:id/payments`.
+- **Nothing in `apps/web` calls `/admin/orders/:id/payments`** — that N2 endpoint is
+  API-only (probes + tests). Grep confirms 0 UI callers.
+- `apps/api/src/pos/pos.service.ts` writes exactly ONE payment row per sale:
+  `sell()` at :167 (payment.create at :241) and `completeHold()` at :471 (payment.create at :540).
+  Both set `method: "cash"`, `changeMinor`, `registerSessionId`.
+- Request contracts: `PosSellRequest` (`packages/contracts/src/index.ts:150`) and
+  `PosHoldCompleteRequest` (:179) both carry `paymentMethod: "cash" | "credit"` + `tenderedMinor?`.
+- Delivery orders reach payment through the same `completeHold` (`OrdersPanel` line ~386
+  opens a delivery-confirm modal for `isDelivery` orders).
+
+**Stock ledger (decisive for M2).**
+- `domain/movements.ts` exports only `recordMovement`, `deductStock`, `restoreStock`,
+  `InsufficientStockError`. **There is no generic adjust helper** — M2 must add one.
+- `MovementInput.type` is a free `String`; the canonical set is in its comment:
+  `RESERVE | RELEASE | CONSUME | ADJUST | RECEIPT | TRANSFER_IN | TRANSFER_OUT | VOID_RESTORE`.
+- `StockMovement` has **no `reason` field** — a reason goes in `note`; it does carry
+  `balanceAfter` and `warehouseId`.
+- `type: "ADJUST"` is already written in 4 places — `admin/product-admin.service.ts:161`
+  ("product edit stock"), `admin/warehouse.service.ts:51` and `:59` ("manual stock set"),
+  and `domain/reconcile.ts:229/:264` — all with `createdBy: null`. M2 reuses this mechanic
+  (promote it to a first-class, actor-attributed adjustment) instead of inventing a new one.
+- No stock/movement HTTP routes exist yet (`@Get|@Post` for stock/movements → none).
+- `InventoryPanel.tsx` (134 lines) reads `GET /admin/inventory?…` (filters, sort, value).
+
+**Tax (decisive for M4).**
+- `Order` money columns are `subtotalMinor`, `deliveryFeeMinor`, `discountMinor`,
+  `totalMinor` + `snapshot Json`. **No tax columns.**
+- Checkout identity: `deliveryFee = pickup ? 0 : store.deliveryFeeMinor`
+  (`checkout.service.ts:177`); voucher/loyalty discount at :201–:223;
+  `finalTotal = totals.totalMinor − discountMinor` (:223).
+- The order snapshot is written in **four** places — `pos.service.ts:145` (sell),
+  `pos.service.ts:465` (hold), `checkout.service.ts:272`, `order-admin.service.ts:171`
+  (item edit, which also recomputes `totalMinor`). Any tax field must be handled in all four.
+
+**Web plumbing.**
+- `apps/web/src/lib/admin.ts` exposes `adminHeaders()` and `fetchAdminOrders()` — there is
+  **no generic POST helper**; new calls use `adminHeaders()` + `fetch`.
+- E2E specs are numbered `01…06` in `apps/api/e2e/` → new UI spec = `07-*.spec.ts`.
+- OrdersPanel anchors: Pay state at :106–:108 (`payHold/payMethod/tendered`),
+  validation `payValidated()` at :349, submit at :359, Pay buttons at :405 and :436,
+  Pay modal JSX at :799+.
+
+---
+
 ## 5. Next-to-do plan — ordered modules (one per `CONTINUE`)
 
 Order logic: **finish what is half-built → close the biggest Manage gap → do what the operator
 asked for by name → then the heavy schema work**. Each module below is designed so a fresh
 session needs zero discovery: the file list is the brief.
 
-### M1 — N2 UI: tender rows (finish N2) · P0.1 · M · ~180K
-- **Goal**: the operator can take a split payment from the browser.
-- **Touch**: `apps/web/src/components/admin/OrdersPanel.tsx` (Pay modal only — anchor-read it),
-  `apps/web/src/components/admin/PosPanel.tsx` (only if the POS payment step is reused),
-  `apps/web/src/lib/admin.ts` (add `fetchPaymentMethods`, `postTenders`).
-- **Deliverable**: tender rows (method select from `GET /admin/payment-methods`, amount,
-  cash-tendered, reference) + live `remaining / change` + `settlement` badge; POST
-  `{idempotencyKey: crypto.randomUUID(), tenders:[…]}`; show server 409/422 messages verbatim.
-- **Tests**: extend `apps/api/e2e/` with one UI spec (this is a `.tsx` change → E2E required).
-- **Definition of done**: browser shows PARTIAL → PAID across two saves; a rejected overpay shows
-  the server message; `new` data visible after refresh.
+### M1 — Split payments in the REAL money paths · P0.1 · L (4 steps) · ~220K
+**Why the scope changed:** the old plan said "add tender rows to the orders Pay modal" — but
+that modal posts to `/admin/pos/holds/:id/complete`, and `/admin/orders/:id/payments` has **no
+UI caller at all** (§4.5). Implementing the old plan would have built a UI nobody uses.
 
-### M2 — Stock Adjustment + Adjustment History + Stock Flow Records · P0.2 · M · ~180K
+**Goal**: the operator can take a multi-tender payment from POS quick-sale and from the Orders
+Pay modal, served by ONE writer for payment rows.
+
+- **Step 1 — one writer (domain, no behaviour change).** Extract the tender application out of
+  `SplitPaymentService.recordTenders` into `apps/api/src/payments/tenders.ts`:
+  `applyTenders(tx, { storeId, orderId, actorId, tenders, idempotencyKey? })` returning the rows
+  written + `changeMinor`. `SplitPaymentService` and both POS paths call it. Existing N2 tests
+  must stay green untouched — that is the proof the refactor was behaviour-preserving.
+- **Step 2 — POS accepts tenders.** `PosSellRequest` + `PosHoldCompleteRequest`
+  (`packages/contracts/src/index.ts:150/:179`) gain an optional
+  `tenders?: { methodCode; amountMinor; tenderedMinor?; reference? }[]`. When absent, build a
+  one-row list from today's `paymentMethod` + `tenderedMinor` (backward compatible — old clients
+  and the E2E specs keep passing). `pos.service.ts` `sell()` (:167, payment.create :241) and
+  `completeHold()` (:471, :540) stop writing the payment row inline and delegate to
+  `applyTenders`. Keep: shift attribution, `changeMinor` on the response, credit → `sellOnCredit`.
+- **Step 3 — UI tender rows.** OrdersPanel Pay modal (:799+): rows of
+  `method (from GET /admin/payment-methods) · amount · cash tendered · reference`, live
+  `Remaining`/`Change`, plus the existing utang signature block when a `credit` row exists.
+  Payment buttons at :405/:436 and the delivery-confirm branch (:386) stay as they are. New
+  helpers in `lib/admin.ts`: `fetchPaymentMethods()`, using `adminHeaders()` (no generic POST
+  helper exists).
+- **Step 4 — proof.** E2E `apps/api/e2e/07-split-payment.spec.ts`: open shift → POS sell with
+  cash+gcash → assert both tender rows and the drawer's `cashSalesMinor`; then a second save
+  showing `PARTIAL → PAID`. Extend `scripts/probe-n2-split-payments.ts` with a
+  `sell(…tenders)` leg so the API path is covered by a probe too.
+- **Named acceptance tests**: `split.tenders.ts` (replay/idempotency, overpay, change, credit
+  limit, shift attribution) + POS regressions `pos.service.test.ts` (17 existing must stay
+  green) + `07-split-payment.spec.ts`.
+- **Rollback**: Step 1+2 are additive (a `tenders` field nobody sends yet) — revert the commit
+  and the old single-method path returns. No migration in this module.
+- **Explicitly out of scope**: splitting a DELIVERY order's COD collection across tenders later
+  in its lifecycle (that stays on the order-level endpoint until M2's screens land).
+
+### M2 — Stock Adjustment + Adjustment History + Stock Flow Records · P0.2 · M · ~190K
 - **Goal**: expose the `StockMovement` ledger as an operator workflow (NexoPOS Inventory flow).
-- **Touch**: new `apps/api/src/inventory/adjustment.service.ts` (+ `.test.ts`), one controller
-  route group `POST /admin/products/:id/adjust` + `GET /admin/stock/movements`,
-  `apps/web/src/components/admin/InventoryPanel.tsx` (134 lines — safe to read fully).
-- **Rules**: reuse `domain/movements.ts` (append-only, guarded, `InsufficientStockError`);
-  adjustments must never write a bare balance — always a movement + derived balance; reason
-  required; manager+ only; cross-tenant 404.
-- **Deliverable**: 5-step flow (product → current stock → delta + reason → confirm → history
-  row), plus a filterable "Stock Flow" list (product, type, delta, balanceAfter, actor, time).
-- **Tests**: service tests incl. guard rejection + reconcile after adjustment = 0 drift; probe.
+- **Key de-risk (§4.5)**: the mechanic already exists — `warehouse.service.ts:51/:59` performs a
+  guarded level upsert + an `ADJUST` movement with `balanceAfter`. M2 promotes that into a
+  first-class, **actor-attributed, reason-carrying** adjustment instead of inventing a ledger path.
+- **New server code**:
+  - `domain/movements.ts` gains `adjustStock(tx, { storeId, productId, warehouseId?, delta,
+    reason, actorId })`: upsert the `StockLevel`, write `type: "ADJUST"` with `balanceAfter`,
+    `createdBy: actorId`, `note: reason` (there is no `reason` column — §4.5), and refuse a
+    negative result with `InsufficientStockError` unless the caller passes `allowNegative: true`
+    (stock-take correction, manager+ only, recorded in the audit log).
+  - `apps/api/src/inventory/inventory.service.ts` (+ `.test.ts`): `adjust()`, `history()`,
+    `flow()` (filters: product, type, from/to, warehouse, actor), each tenant-scoped.
+  - `apps/api/src/inventory/inventory.controller.ts` (new — no stock routes exist today):
+    `POST /admin/stock/adjust`, `GET /admin/stock/adjustments`, `GET /admin/stock/movements`
+    (manager+ for the POST, VIEW for the reads), DTO rules for every field.
+- **UI** (`InventoryPanel.tsx`, 134 lines — safe to read fully): a per-row "Adjust" action opening
+  the 5-step flow (product → **current stock shown** → delta ± reason → confirm → the new row
+  appears in history); a "History / Flow" view with the filters above; warehouse selector seeded
+  from the existing warehouses endpoint.
+- **Named acceptance tests**: `adjustStock` respects the guard (reject over-draw), records
+  `balanceAfter` correctly on both directions, attributes the actor, requires a reason; history
+  and flow are tenant-isolated (cross-tenant 404); `scripts/reconcile.ts` reports **0 drift**
+  after adjustments (that is the ledger-integrity proof).
+- **Probe**: extend `scripts/probe-stock-guard.ts` (or a new `probe-adjustments.ts`) — adjust
+  +5, adjust −3, assert level/ledger/`balanceAfter` and the cross-tenant denial.
+- **Rollback**: additive routes + a new service; no schema change. Reverting restores the
+  warehouse-only path.
 
 ### M3 — Receipts & labels (N6) · P0.3 · M · ~160K
 - **Goal**: 57 mm receipt polish + 57×40 mm product labels (browser print CSS only, no bridge).
@@ -269,16 +364,44 @@ session needs zero discovery: the file list is the brief.
   barcode (needs M5; print SKU until then).
 - **Tests**: E2E print-preview assertion (element order), probe not needed (no API).
 
-### M4 — Tax engine, PH VAT (N4) · P1.1 · L · ~320K
-- **Goal**: BIR-shaped receipts and correct VAT.
-- **Touch**: `prisma/schema.prisma` (+`TaxRate`/`TaxGroup`, `Product.taxExempt`, `Order`
-  snapshot fields `vatableMinor/taxMinor/vatExemptMinor`), one migration, `domain/tax.ts`
-  (+test), checkout + POS sell + order snapshot, `SettingsPanel` section, `ReceiptModal`.
-- **Rules**: vat-inclusive vs exclusive flag; single default 12 %; per-product exempt; the tax
-  numbers go INTO the immutable order snapshot (never recomputed on read); rounding is
-  per-line then summed (document the choice in the runbook).
-- **Tests**: inclusive/exclusive/exempt/zero-rated cases + receipt totals identity
-  (`vatable + exempt + tax == total`).
+### M4 — Tax engine, PH VAT (N4) · P1.1 · L · ~340K
+- **Goal**: correct VAT + BIR-shaped receipts, without breaking the existing money identity.
+- **Decisions to lock BEFORE coding** (ask the operator if unclear — do not guess):
+  1. Are catalogue prices **VAT-inclusive** (PH retail norm) or exclusive? Default: **inclusive**.
+  2. Does the **delivery fee** carry VAT? Default: **no** (separate service line, still printed).
+  3. Are **vouchers/loyalty discounts** applied **before** tax (tax on the discounted amount)?
+     Default: **yes** — discount reduces the VATable base.
+- **Schema** (`prisma/schema.prisma`, hand-edited — never `prisma format`, §6.2):
+  - `StoreSettings`: `vatEnabled Boolean @default(true)`, `vatRateBp Int @default(1200)` (basis
+    points = 12.00 %), `pricesIncludeVat Boolean @default(true)`, `tin String?`.
+  - `Product`: `taxExempt Boolean @default(false)`.
+  - `Order`: `vatableMinor Int @default(0)`, `vatMinor Int @default(0)`, `vatExemptMinor Int @default(0)`
+    (explicit columns — reports must be able to SUM them; detail also goes into `snapshot.tax`).
+  - Migration name: `module_m4_tax_engine`. Apply with `prisma migrate deploy`, then prove parity
+    with `prisma migrate diff … --script` → *"This is an empty migration."*
+- **Domain** `apps/api/src/domain/tax.ts` (+ `tax.test.ts`): pure functions
+  `computeLineTax(line, { rateBp, pricesIncludeVat, taxExempt })` and
+  `summarizeTax(lines, opts)` → `{ vatableMinor, vatMinor, exemptMinor, grossMinor }`.
+  **Rounding rule (write it in the runbook): round per line to the nearest centavo, then sum** —
+  never round the total (BIR-friendly and reproducible).
+- **Identity to preserve** (checkout `:223`, `:268–:272`): with `pricesIncludeVat = true`,
+  `totalMinor = subtotalMinor + deliveryFeeMinor − discountMinor` stays **unchanged**, and
+  `vatMinor` is *extracted* from it. With exclusive pricing,
+  `totalMinor = subtotalMinor + vatMinor + deliveryFeeMinor − discountMinor`. Assert this identity
+  in a test for both modes — it is the single most likely regression.
+- **Four snapshot writers must all carry tax** (§4.5): `pos.service.ts:145` (sell),
+  `pos.service.ts:465` (hold), `checkout.service.ts:272`, `order-admin.service.ts:171`
+  (item edit — also recomputes `totalMinor`; recompute tax there too or the receipt lies after
+  an edit).
+- **UI**: `SettingsPanel` gains a Tax section (enabled, rate, inclusive flag, TIN);
+  `ProductsPanel` gains the per-product "VAT-exempt" toggle; `ReceiptModal` prints the BIR block:
+  `VATable Sales / VAT (12%) / VAT-Exempt Sales / Zero-Rated / Total`, plus the store TIN and
+  receipt number. `PosPanel` shows the tax line in the cart total when exclusive.
+- **Named acceptance tests**: inclusive extraction (12 % of a ₱112.00 line = ₱12.00),
+  exclusive addition, exempt product, mixed cart (vatable + exempt), rounding on a ₱0.99 × 3 line,
+  voucher-before-tax, delivery fee excluded, and the four identity assertions.
+- **Rollback**: additive columns with defaults (`vatEnabled` can be turned off in settings, and
+  the identity test proves totals are untouched when it is off) — that is the safety valve.
 
 ### M5 — Product barcode + unit · P1.2 · M · ~150K
 - **Touch**: schema (`Product.barcode String?`, `Product.unit String?`, `soldByWeight Boolean`),
@@ -349,15 +472,44 @@ session needs zero discovery: the file list is the brief.
 4. E2E (UI modules) · 5. typecheck `0` · 6. `docs/progress.md` + this file updated ·
 7. commit + push · 8. report: what changed, invariants, evidence, gaps, next.
 
+### 6.4 Risk register (per module) — what can go wrong and the mitigation
+
+| Module | Main risk | Mitigation | If it goes wrong |
+|---|---|---|---|
+| M1 | refactor silently changes money behaviour | N2 + POS suites must pass **untouched** after Step 1; add the `sell(tenders)` probe leg before touching the UI | revert Step 1 alone (pure refactor commit) |
+| M1 | two writers for payment rows (old inline + new helper) | delete the inline `payment.create` in `sell`/`completeHold` in the same commit as the wiring | grep `payment.create` in `pos.service.ts` → must be 0 |
+| M2 | adjustment writes a balance without a movement | `adjustStock` is the ONLY writer; test asserts ledger-vs-balance and `reconcile.ts` = 0 drift | run `scripts/reconcile.ts` (dry-run) before committing |
+| M2 | negative stock hides a mistake | guard rejects by default; `allowNegative` only for manager+ stock-take, audit-logged | flip the flag off; the movement row is the audit trail |
+| M3 | print CSS breaks the N1 report | extend the existing print block, never re-scope `@page`; E2E print assertion | re-check the X/Z report print first |
+| M4 | **money regression** (identity change) | identity test for inclusive AND exclusive mode; `vatEnabled=false` reproduces today's numbers exactly | flip `vatEnabled` off — totals return to the current behaviour with no code change |
+| M4 | tax recomputed differently in 4 writers | one `summarizeTax` domain function, all four call it; test each writer path | reconcile order totals vs snapshot in a probe |
+| M5 | barcode collisions across stores | `@@unique([storeId, barcode])`, nullable (multi-null is fine in Postgres) | drop the index in a follow-up migration |
+| M6 | supplier backfill duplicates rows | idempotent backfill keyed by `(storeId, lower(name))`; run dry-run first | delete the created `Supplier` rows, `vendor` text is untouched |
+| M7 | permission matrix silently widens access | default-permissive fallback + audit-logged changes + a test that a missing row == today's behaviour | delete the matrix rows (behaviour reverts) |
+| M8/M9 | read-only/UI-only | no schema, no money | revert the commit |
+
+### 6.5 Definition of Ready (before starting any module)
+
+1. The module block in §5 + §4.5 constraints pasted into the session (that IS the brief).
+2. Servers state known (`/samstatus`) and the API is on the code you think it is.
+3. For schema modules: the migration name chosen + the operator decisions listed in the block
+   answered (M4 has three — ask, don't guess).
+4. The acceptance test names from the block written down first (test-first where practical).
+5. Nothing else in flight: no other DB-heavy run, no uncommitted work from another module.
+
 ---
 
 ## 7. TODO checklist (copy one line per session)
 
 ```
-[ ] M1  N2 UI — tender rows in Orders Pay (+POS if reused)  … E2E spec added
-[ ] M2  Stock Adjustment + Adjustment History + Stock Flow screens
+M1  Split payments in the REAL money paths  (4 steps: one writer -> POS tenders -> UI -> E2E)
+[ ]   M1.1 extract applyTenders into payments/tenders.ts (N2 tests stay green, no behaviour change)
+[ ]   M1.2 PosSellRequest/PosHoldCompleteRequest accept tenders[]; sell/completeHold delegate
+[ ]   M1.3 OrdersPanel Pay modal tender rows + lib/admin.ts fetchPaymentMethods()
+[ ]   M1.4 e2e/07-split-payment.spec.ts + probe sell(tenders) leg + docs
+[ ] M2  Stock Adjustment + Adjustment History + Stock Flow screens (reuse the existing ADJUST path)
 [ ] M3  Receipts & labels (57mm + 57x40mm label sheet)
-[ ] M4  Tax engine — PH VAT 12% incl/excl + exempt, BIR receipt, snapshot
+[ ] M4  Tax engine — PH VAT 12% incl/excl + exempt, BIR receipt, 4 snapshot writers
 [ ] M5  Product barcode + unit fields (+POS scan input)
 [ ] M6  Suppliers master (+ backfill Purchase.vendor)
 [ ] M7  Roles x permissions matrix screen
@@ -368,6 +520,16 @@ session needs zero discovery: the file list is the brief.
 [ ] R3  Managed Redis decision (Upstash?): move TTL cache + rate limiter out of process
 [ ] R4  Failed-delivery retry policy + post-dispatch cancellation rules
 ```
+
+**Ordering rationale (why this sequence).** M1 finishes a shipped-but-unreachable feature and
+removes a duplicate money writer; M2 needs no schema and closes the biggest Manage gap; M3 is
+operator-requested and reuses N1's print CSS; M4 is the only heavy money change and is safest
+*after* M1 unified the payment writer; M5 unblocks labels/scanning; M6–M9 are independent.
+If the operator picks out of order, honour it — the loop in §6.1 is module-agnostic.
+
+**Dependencies (hard).** M1 ← nothing · M2 ← nothing · M3 ← M1 (receipt shows tenders) ·
+M4 ← M1 (one payment writer) and M9 optional · M5 ← nothing · M6 ← nothing · M7 ← nothing ·
+M8 ← M4 for the tax report line only.
 
 ---
 
