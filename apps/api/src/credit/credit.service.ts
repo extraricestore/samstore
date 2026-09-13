@@ -7,6 +7,7 @@
 
 import { prisma } from "../persistence/prisma-repositories.js";
 import { cacheGet, cacheSet, cacheBust, cacheKey } from "../persistence/ttl-cache.js";
+import { RegisterService } from "../registers/register.service.js";
 import type { ApiError } from "@sam-store/contracts";
 
 /** Both ledger lists (unpaid/paid) + customers are stale after any credit write. */
@@ -27,6 +28,8 @@ export const CREDIT_SERVICE = Symbol("CREDIT_SERVICE");
 
 export class CreditService {
   private readonly _prisma = prisma;
+  /** N1: drawer attribution for counter utang settlements. */
+  private readonly registers = new RegisterService();
   /** Approve a store customer for utang with a limit (minor units). */
   async approveCredit(storeId: string, storeCustomerId: string, limitMinor: number, actorId: string): Promise<CreditResult<{ id: string; creditApproved: boolean; creditLimitMinor: number }>> {
     if (!Number.isInteger(limitMinor) || limitMinor < 0) {
@@ -128,8 +131,12 @@ export class CreditService {
       const pay = Math.min(amountMinor, sc.creditBalanceMinor);
 
       const payment = await prisma.$transaction(async (tx) => {
+        // N1: attribute the settlement to the open shift (if any) so it is visible in
+        // that shift's report. Its tender method is recorded as "credit" — the ledger
+        // side of utang; the drawer's cash math counts only cash tenders.
+        const registerSessionId = await this.registers.attachOpenSession(storeId);
         const p = await tx.payment.create({
-          data: { storeId, method: "credit", amountMinor: pay, note: note?.trim() ?? "Utang payment", type: "payment", createdBy: actorId, signatureData },
+          data: { storeId, method: "credit", amountMinor: pay, note: note?.trim() ?? "Utang payment", type: "payment", createdBy: actorId, signatureData, registerSessionId },
         });
         await tx.creditEntry.create({
           data: { storeId, storeCustomerId, type: "payment", amountMinor: -pay, note: note?.trim() ?? "Utang payment", createdBy: actorId },

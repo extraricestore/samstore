@@ -23,6 +23,7 @@ import { PosService, POS_SERVICE } from "./pos/pos.service.js";
 import { PosController } from "./pos/pos.controller.js";
 import { RegisterController } from "./registers/register.controller.js";
 import { RegisterService, REGISTER_SERVICE } from "./registers/register.service.js";
+import { SplitPaymentService, SPLIT_PAYMENT_SERVICE } from "./payments/split-payment.service.js";
 import { PaymentsService, PAYMENTS_SERVICE } from "./payments/payments.service.js";
 import { PaymentsController } from "./payments/payments.controller.js";
 import { CreditService, CREDIT_SERVICE } from "./credit/credit.service.js";
@@ -88,6 +89,10 @@ const CLAIM_SECRET = process.env.CLAIM_SIGNING_SECRET ?? "dev-only-in-memory-sec
     {
       provide: REGISTER_SERVICE,
       useFactory: () => new RegisterService(),
+    },
+    {
+      provide: SPLIT_PAYMENT_SERVICE,
+      useFactory: () => new SplitPaymentService(),
     },
     {
       provide: CUSTOMER_AUTH_SERVICE,

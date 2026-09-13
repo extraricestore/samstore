@@ -57,6 +57,50 @@ test("enforces bounds and enums", () => {
   assert.equal(checkDto({ name: "ok", qty: 5, mode: "b", flag: true }, SHAPE).ok, true);
 });
 
+test("array rule: validates each item, bounds the count and rejects unknown item keys", () => {
+  const rule: ObjectRule = {
+    kind: "object",
+    fields: {
+      idempotencyKey: { kind: "string", required: true, min: 8 },
+      tenders: {
+        kind: "array",
+        required: true,
+        min: 1,
+        max: 2,
+        item: {
+          kind: "object",
+          fields: { methodCode: { kind: "string", required: true }, amountMinor: { kind: "int", required: true, min: 1 } },
+        },
+      },
+    },
+  };
+
+  const ok = checkDto<{ tenders: { methodCode: string; amountMinor: number }[] }>(
+    { idempotencyKey: "n2-validate-1", tenders: [{ methodCode: "cash", amountMinor: 100 }] },
+    rule,
+  );
+  assert.equal(ok.ok, true, JSON.stringify(ok));
+  assert.equal(ok.ok && ok.value.tenders.length, 1);
+
+  const empty = checkDto({ idempotencyKey: "n2-validate-2", tenders: [] }, rule);
+  assert.equal(empty.ok, false);
+  assert.equal(empty.ok === false && empty.errors.some((e) => e.includes("at least 1")), true);
+
+  const tooMany = checkDto({ idempotencyKey: "n2-validate-3", tenders: [{ methodCode: "cash", amountMinor: 1 }, { methodCode: "cash", amountMinor: 1 }, { methodCode: "cash", amountMinor: 1 }] }, rule);
+  assert.equal(tooMany.ok, false);
+
+  const badItem = checkDto({ idempotencyKey: "n2-validate-4", tenders: [{ methodCode: "cash", amountMinor: 0 }] }, rule);
+  assert.equal(badItem.ok, false);
+  assert.equal(badItem.ok === false && badItem.errors.some((e) => e.startsWith("tenders[0].amountMinor")), true, "errors name the offending item");
+
+  const unknownItemKey = checkDto({ idempotencyKey: "n2-validate-5", tenders: [{ methodCode: "cash", amountMinor: 1, sneaky: true }] }, rule);
+  assert.equal(unknownItemKey.ok, false);
+  assert.equal(unknownItemKey.ok === false && unknownItemKey.errors.some((e) => e.includes("tenders[0].sneaky")), true);
+
+  const notAnArray = checkDto({ idempotencyKey: "n2-validate-6", tenders: "cash" }, rule);
+  assert.equal(notAnArray.ok, false);
+});
+
 test("rejects non-object bodies", () => {
   for (const bad of [null, undefined, "string", 42, [1, 2]]) {
     assert.equal(checkDto(bad, SHAPE).ok, false, String(bad));

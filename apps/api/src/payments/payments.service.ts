@@ -7,6 +7,7 @@
 
 import { prisma } from "../persistence/prisma-repositories.js";
 import { restoreStock } from "../domain/movements.js";
+import { RegisterService } from "../registers/register.service.js";
 import type { ApiError } from "@sam-store/contracts";
 
 export type PaymentResult<T> = { ok: true; value: T } | { ok: false; error: ApiError };
@@ -14,6 +15,9 @@ export type PaymentResult<T> = { ok: true; value: T } | { ok: false; error: ApiE
 export const PAYMENTS_SERVICE = Symbol("PAYMENTS_SERVICE");
 
 export class PaymentsService {
+  /** N1: drawer attribution for the non-POS cash paths (refunds, admin payments). */
+  private readonly registers = new RegisterService();
+
   /** Record a payment against an order. */
   async recordPayment(input: {
     orderId: string;
@@ -29,6 +33,9 @@ export class PaymentsService {
     if (!Number.isInteger(input.amountMinor) || input.amountMinor <= 0) {
       return { ok: false, error: { type: "validation", errors: ["amountMinor must be a positive integer"] } };
     }
+    // N1: a cash payment taken while a drawer shift is open belongs to that shift;
+    // without an open shift it still records (off-counter collection) with no session.
+    const registerSessionId = input.method === "cash" ? await this.registers.attachOpenSession(input.storeId) : null;
     const payment = await prisma.payment.create({
       data: {
         orderId: input.orderId,
@@ -38,6 +45,7 @@ export class PaymentsService {
         changeMinor: input.changeMinor ?? 0,
         note: input.note?.trim() ?? null,
         createdBy: input.createdBy ?? null,
+        registerSessionId,
       },
     });
     return { ok: true, value: { id: payment.id } };
@@ -91,7 +99,7 @@ export class PaymentsService {
       await restoreStock(tx, storeId, order.items.map((it) => ({ productId: it.productId ?? "", quantity: it.quantity })), { type: "VOID_RESTORE", orderId, createdBy: actorId });
       await tx.order.update({ where: { id: orderId }, data: { status: "CANCELLED", paymentStatus: "CANCELLED_REFUND" } });
       await tx.payment.create({
-        data: { orderId, storeId, method: "cash", amountMinor: 0, note: `VOID: ${reason?.trim() ?? "same-day void"}`.slice(0, 200), type: "void", createdBy: actorId },
+        data: { orderId, storeId, method: "cash", amountMinor: 0, note: `VOID: ${reason?.trim() ?? "same-day void"}`.slice(0, 200), type: "void", createdBy: actorId, registerSessionId: await this.registers.attachOpenSession(storeId) },
       });
       await tx.orderStatusHistory.create({
         data: { orderId, storeId, fromStatus: order.status, toStatus: "CANCELLED", reason: reason?.trim() ?? null, actorType: "pos_void", actorId },
@@ -121,8 +129,11 @@ export class PaymentsService {
     }
 
     await prisma.$transaction(async (tx) => {
+      // N1: the cash leaves the drawer NOW — attribute the refund to the open shift
+      // so the X/Z report's expected cash accounts for it (null when off-counter).
+      const registerSessionId = await this.registers.attachOpenSession(storeId);
       await tx.payment.create({
-        data: { orderId, storeId, method: "cash", amountMinor: -refundAmount, note: `REFUND: ${reason?.trim() ?? "customer refund"}`.slice(0, 200), type: "refund", createdBy: actorId },
+        data: { orderId, storeId, method: "cash", amountMinor: -refundAmount, note: `REFUND: ${reason?.trim() ?? "customer refund"}`.slice(0, 200), type: "refund", createdBy: actorId, registerSessionId },
       });
       await tx.order.update({ where: { id: orderId }, data: { status: "CANCELLED", paymentStatus: "CANCELLED_REFUND" } });
       await tx.orderStatusHistory.create({

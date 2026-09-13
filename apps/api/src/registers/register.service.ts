@@ -77,14 +77,14 @@ export class RegisterService {
     return { id: created.id, name: created.name };
   }
 
-  /** Derived drawer totals for a session (works for OPEN and CLOSED sessions). */
+  /** Derived drawer totals for a session (works for OPEN and CLOSED sessions).
+   *  Queries run SEQUENTIALLY on purpose: the managed pooler caps sessions and a
+   *  parallel burst from one client can exceed it (EMAXCONNSESSION). */
   async totalsFor(storeId: string, sessionId: string): Promise<SessionTotals> {
-    const [session, movements, payments, orders] = await Promise.all([
-      prisma.registerSession.findFirst({ where: { id: sessionId, storeId }, select: { openingFloatMinor: true } }),
-      prisma.cashMovement.findMany({ where: { storeId, sessionId }, select: { type: true, amountMinor: true } }),
-      prisma.payment.findMany({ where: { storeId, registerSessionId: sessionId }, select: { method: true, amountMinor: true, type: true } }),
-      prisma.order.findMany({ where: { storeId, registerSessionId: sessionId }, select: { totalMinor: true, createdAt: true } }),
-    ]);
+    const session = await prisma.registerSession.findFirst({ where: { id: sessionId, storeId }, select: { openingFloatMinor: true } });
+    const movements = await prisma.cashMovement.findMany({ where: { storeId, sessionId }, select: { type: true, amountMinor: true } });
+    const payments = await prisma.payment.findMany({ where: { storeId, registerSessionId: sessionId }, select: { method: true, amountMinor: true, type: true } });
+    const orders = await prisma.order.findMany({ where: { storeId, registerSessionId: sessionId }, select: { totalMinor: true, createdAt: true } });
 
     let cashInMinor = 0;
     let cashOutMinor = 0;
@@ -272,6 +272,17 @@ export class RegisterService {
         movements: movements.map((m) => ({ type: m.type, amountMinor: m.amountMinor, reason: m.reason, createdBy: m.createdBy, createdAt: m.createdAt.toISOString() })),
       },
     };
+  }
+
+  /**
+   * Attribution helper for the OTHER cash paths (admin-recorded payments, refunds,
+   * voids, utang settlements): returns the open shift's id, or null when no shift is
+   * open. Never enforces — off-counter money still records, it just is not part of a
+   * drawer's expected cash.
+   */
+  async attachOpenSession(storeId: string): Promise<string | null> {
+    const session = await prisma.registerSession.findFirst({ where: { storeId, status: "OPEN" }, select: { id: true } });
+    return session?.id ?? null;
   }
 
   /**

@@ -111,6 +111,43 @@ shift bar; the payment step disables **Cash** when the drawer is closed.
 Printing: the X/Z report prints on the **57 mm** roll (`@page { size: 57mm auto }`, body
 hidden in print except `.register-report`).
 
+## Split & partial payments + payment methods (N2)
+
+Tenders are recorded through ONE command — `POST /admin/orders/:id/payments` with a
+`tenders` array — so a single transaction writes every tender for an order:
+
+```json
+{ "idempotencyKey": "counter-2026-09-13-0007",
+  "tenders": [ { "methodCode": "cash", "amountMinor": 30000, "tenderedMinor": 50000 },
+               { "methodCode": "credit", "amountMinor": 30000 } ] }
+```
+
+Rules enforced server-side (422 validation / 409 conflict):
+
+- Σ applied ≤ `outstanding` — overpayment is refused (`Tenders exceed the outstanding balance`);
+- a **cash** tender may hand over more than it applies → the difference is `changeMinor`;
+  non-cash tenders may not over-tender;
+- methods flagged `requiresReference` (gcash/maya/bank transfer) must carry `reference`;
+- a **credit** tender passes through `CreditService.sellOnCredit`, so the customer's limit
+  guard applies to the credit portion only (and writes one `CreditEntry`);
+- replaying the same `idempotencyKey` returns the ORIGINAL rows (no double charge);
+- tenders taken during an open shift are attached to that shift — cash counts toward the
+  drawer, the rest appears as non-cash takings on the X/Z report.
+
+`GET /admin/orders/:id/payments` returns `{ payments, summary }` where the summary carries
+`paidMinor / refundedMinor / outstandingMinor / changeMinor / settlement`
+(`UNPAID | PARTIAL | PAID | OVERPAID`). **Settlement is derived from the payment rows on
+every read — it is never stored**, so it cannot drift.
+
+Payment-method registry: `GET /admin/payment-methods` (seeded on first use with
+cash, credit, gcash, maya, bank_transfer) and `POST /admin/payment-methods` to add or
+change one (manager+). Disabling a method immediately blocks its use; `code` is unique
+per store.
+
+Attribution of the other cash paths (refunds, admin-recorded payments, utang
+settlements) uses `RegisterService.attachOpenSession` — a non-enforcing lookup that links
+the row to the open shift when there is one and records `null` when the counter is closed.
+
 ## Reconciliation
 
 Every stored BALANCE must equal its append-only LEDGER. One command checks all four identities and can repair them (dry-run by default, exit 1 on drift so it can gate a cron/deploy):

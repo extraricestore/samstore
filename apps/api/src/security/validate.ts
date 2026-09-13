@@ -40,7 +40,18 @@ export interface ObjectRule {
   allowUnknown?: boolean;
 }
 
-export type Rule = StringRule | IntRule | BoolRule | ObjectRule;
+export type Rule = StringRule | IntRule | BoolRule | ObjectRule | ArrayRule;
+
+/** A list of items validated one by one (each item may itself be an object rule). */
+export interface ArrayRule {
+  kind: "array";
+  required?: boolean;
+  /** Minimum number of items. */
+  min?: number;
+  /** Maximum number of items. */
+  max?: number;
+  item: Rule;
+}
 
 export type ValidationResult<T> = { ok: true; value: T } | { ok: false; errors: string[] };
 
@@ -113,9 +124,39 @@ function checkOne(value: unknown, rule: Rule, path: string, errors: string[]): u
         errors.push(`${path} must be an object`);
         return undefined;
       }
-      return checkDto(value as Record<string, unknown>, rule, path).ok
-        ? (value as Record<string, unknown>)
-        : undefined;
+      // N2 fix: the nested check builds its OWN error list — forward those errors to the
+      // outer one, otherwise an invalid nested object is silently DROPPED and the whole
+      // DTO reports ok:true (found by the array-rule test: amountMinor 0 was accepted).
+      const nested = checkDto(value as Record<string, unknown>, rule, path);
+      if (!nested.ok) {
+        errors.push(...nested.errors);
+        return undefined;
+      }
+      return value as Record<string, unknown>;
+    }
+    case "array": {
+      if (value === undefined || value === null) {
+        if (rule.required) errors.push(`${path} is required`);
+        return undefined;
+      }
+      if (!Array.isArray(value)) {
+        errors.push(`${path} must be an array`);
+        return undefined;
+      }
+      if (rule.min !== undefined && value.length < rule.min) {
+        errors.push(`${path} must have at least ${rule.min} item(s)`);
+        return undefined;
+      }
+      if (rule.max !== undefined && value.length > rule.max) {
+        errors.push(`${path} must have at most ${rule.max} item(s)`);
+        return undefined;
+      }
+      const out: unknown[] = [];
+      value.forEach((item, i) => {
+        const checked = checkOne(item, rule.item, `${path}[${i}]`, errors);
+        if (checked !== undefined) out.push(checked);
+      });
+      return out;
     }
   }
 }
@@ -258,5 +299,41 @@ export const CLOSE_SHIFT_DTO: ObjectRule = {
   fields: {
     countedMinor: { kind: "int", required: true, min: 0, max: 1_000_000_000 },
     notes: { kind: "string", max: 300 },
+  },
+};
+
+// ── N2: split payments + payment methods ──────────────────────────────────────
+export const SPLIT_PAYMENT_DTO: ObjectRule = {
+  kind: "object",
+  fields: {
+    idempotencyKey: { kind: "string", required: true, min: 8, max: 200 },
+    note: { kind: "string", max: 300 },
+    tenders: {
+      kind: "array",
+      required: true,
+      min: 1,
+      max: 8,
+      item: {
+        kind: "object",
+        fields: {
+          methodCode: { kind: "string", required: true, min: 2, max: 32 },
+          amountMinor: { kind: "int", required: true, min: 1, max: 1_000_000_000 },
+          tenderedMinor: { kind: "int", min: 1, max: 1_000_000_000 },
+          reference: { kind: "string", max: 64 },
+        },
+      },
+    },
+  },
+};
+
+export const PAYMENT_METHOD_DTO: ObjectRule = {
+  kind: "object",
+  fields: {
+    code: { kind: "string", required: true, min: 2, max: 32 },
+    label: { kind: "string", required: true, min: 1, max: 60 },
+    kind: { kind: "string", values: ["CASH", "CREDIT", "EWALLET", "TRANSFER", "OTHER", "cash", "credit", "ewallet", "transfer", "other"] },
+    requiresReference: { kind: "bool" },
+    enabled: { kind: "bool" },
+    sortOrder: { kind: "int", min: 0, max: 999 },
   },
 };

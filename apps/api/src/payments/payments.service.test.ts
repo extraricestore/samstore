@@ -61,6 +61,10 @@ after(async () => {
     // worker drains it into a NotificationLog row — clear both before the store.
     await prisma.outboxEvent.deleteMany({ where: { storeId: { in: createdIds } } });
     await prisma.notificationLog.deleteMany({ where: { storeId: { in: createdIds } } });
+    // N1: the shift tests create register rows for these stores.
+    await prisma.cashMovement.deleteMany({ where: { storeId: { in: createdIds } } });
+    await prisma.registerSession.deleteMany({ where: { storeId: { in: createdIds } } });
+    await prisma.register.deleteMany({ where: { storeId: { in: createdIds } } });
     await prisma.store.deleteMany({ where: { id: { in: createdIds } } });
   }
   await prisma.$disconnect();
@@ -93,6 +97,43 @@ test("refund rejects unknown order", async () => {
 
 test("paymentsFor unknown order returns null", async () => {
   assert.equal(await svc.paymentsFor("nope", STORE), null);
+});
+
+test("N1: a cash refund while a shift is open is attributed to that shift and reduces its expected cash", async () => {
+  const store = await makeStore();
+  const order = await makeOrder(store.id, "DELIVERED", "COLLECTED");
+
+  const { RegisterService } = await import("../registers/register.service.js");
+  const registers = new RegisterService();
+  const opened = await registers.openSession(store.id, "cashier-1", { openingFloatMinor: 0 });
+  assert.equal(opened.ok, true, JSON.stringify(opened));
+
+  // Cash taken while the shift is open → attributed to it.
+  const taken = await svc.recordPayment({ orderId: order.id, storeId: store.id, method: "cash", amountMinor: 10000, createdBy: "cashier-1" });
+  assert.equal(taken.ok, true, JSON.stringify(taken));
+
+  const refunded = await svc.refundOrder(order.id, store.id, "cashier-1", 4000, "damaged");
+  assert.equal(refunded.ok, true, JSON.stringify(refunded));
+
+  const refundRow = await prisma.payment.findFirst({ where: { orderId: order.id, type: "refund" }, select: { amountMinor: true, registerSessionId: true } });
+  assert.equal(refundRow?.amountMinor, -4000);
+  assert.equal(refundRow?.registerSessionId, opened.ok ? opened.value.sessionId : null, "the refund is bound to the open shift");
+
+  const summary = await registers.currentSession(store.id);
+  assert.equal(summary?.live.cashSalesMinor, 10000);
+  assert.equal(summary?.live.cashRefundsMinor, 4000);
+  assert.equal(summary?.live.expectedMinor, 6000, "cash in the drawer = sale − refund");
+});
+
+test("N1: an off-counter cash payment records cleanly with no shift attribution", async () => {
+  const store = await makeStore();
+  const order = await makeOrder(store.id, "RECEIVED", "PENDING");
+
+  const res = await svc.recordPayment({ orderId: order.id, storeId: store.id, method: "cash", amountMinor: 5000, createdBy: "admin" });
+  assert.equal(res.ok, true, JSON.stringify(res));
+  const row = await prisma.payment.findFirst({ where: { orderId: order.id, type: "payment" }, select: { registerSessionId: true, amountMinor: true } });
+  assert.equal(row?.amountMinor, 5000);
+  assert.equal(row?.registerSessionId, null, "no open shift → the payment is not part of any drawer");
 });
 
 test("M7: a second VOID is rejected — stock is never restored twice", async () => {

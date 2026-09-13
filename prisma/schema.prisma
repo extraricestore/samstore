@@ -164,6 +164,7 @@ model Store {
   registers        Register[] // N1: cash drawer registers (one per store today)
   registerSessions RegisterSession[]
   cashMovements    CashMovement[]
+  paymentMethods   PaymentMethod[] // N2: per-store tender methods
   notifications  NotificationLog[]
   warehouses     Warehouse[]
   stockTransfers StockTransfer[]
@@ -403,9 +404,12 @@ model Payment {
   order       Order?   @relation(fields: [orderId], references: [id])
   storeId     String
   store       Store    @relation(fields: [storeId], references: [id])
-  method      String // cash | credit | cod_collected
+  method      String // cash | credit | cod_collected | <payment-method code>
   amountMinor Int
   changeMinor Int      @default(0) // cash tendered change (cash sales)
+  tenderedMinor Int?   // N2: cash handed over (changeMinor = tendered - applied)
+  reference   String?  // N2: e-wallet / bank reference
+  idempotencyKey String? // N2: replaying the same key never double-charges
   receivedAt  DateTime @default(now())
   type        String   @default("payment") // payment | refund | void
   note        String?
@@ -418,6 +422,36 @@ model Payment {
   @@index([storeId, receivedAt])
   @@index([orderId])
   @@index([registerSessionId])
+  @@index([storeId, idempotencyKey])
+}
+
+// ─────────────────────────── Payment methods (N2) ───────────────────────────
+
+enum PaymentMethodKind {
+  CASH
+  CREDIT
+  EWALLET
+  TRANSFER
+  OTHER
+}
+
+/// A tender method this store accepts (cash, gcash, utang...). Seeded with sensible
+/// defaults on first use; requiresReference forces an e-wallet / bank reference.
+model PaymentMethod {
+  id                String            @id @default(cuid())
+  storeId           String
+  store             Store             @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  code              String
+  label             String
+  kind              PaymentMethodKind @default(OTHER)
+  requiresReference Boolean           @default(false)
+  enabled           Boolean           @default(true)
+  sortOrder         Int               @default(0)
+  createdAt         DateTime          @default(now())
+
+  @@unique([storeId, code])
+  @@unique([storeId, id])
+  @@index([storeId, enabled])
 }
 
 // ──────────────────────────── Cash drawer / shifts (N1) ────────────────────────────
