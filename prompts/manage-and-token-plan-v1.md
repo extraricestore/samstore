@@ -380,3 +380,27 @@ already has a gate number recorded here.
 
 If a module's token use exceeds the §1.3 red flag, stop and report the cost rather than
 continuing — runaway exploration is the single biggest token sink in this project.
+
+---
+
+## 9. Command palette (installed, verified)
+
+A real Hermes plugin registers these in-session slash commands (no shell memorisation):
+
+| Command | Does | When |
+|---|---|---|
+| `/sam` | **bundle** — loads `sam-store-dev` + `systematic-debugging` + `dev-server-lifecycle` | first thing in a new session |
+| `/samstatus` | ports + PIDs, `/health` + metrics (5xx/conflicts/outbox), git HEAD + dirty count, last gate, plan progress | session start, before/after a restart |
+| `/samplan [M1..M9\|todo]` | the TODO checklist, or one module's brief from §5 | picking the next module |
+| `/samsnapshot` | token-cost snapshot: biggest files, area sizes, test source, probe count | when a session feels expensive |
+| `/samdesign [screen]` | UX/UI brief: Bootstrap 5.3 constraint, skills to load, a11y + verification checklist | before any UI work |
+| `/samdebug` | evidence pack: git, worktree, ports, health, api-log tail (redacted), failing tests | when something breaks |
+| `/samgate [status\|<file>]` | full gate **detached** (12–15 min) → `/samgate status`; a single test file runs inline | T3 discipline |
+| `/samprobe [n1\|n2\|stock\|all]` | live API probes, filtered to the evidence lines | after any API change |
+| `/samrestart [api\|web\|both]` | tree-kill the port holder, restart from the right cwd, verify | after edits (T6) |
+| `/sambuild [check]` | detached web rebuild + restart → `/sambuild check` (BUILD_ID match + chunk 200s) | after any `.tsx` change |
+
+Implementation: `$HERMES_HOME/plugins/samstore/` (`plugin.yaml`, `__init__.py`, `sam_ops.py`,
+`sam_read.py`, `sam_actions.py`). Read-only by default; long work is detached so a command never
+blocks the chat; log output is credential-redacted. Validate any change with
+`hermes plugins validate <dir>` (it runs `register()` in isolation).
