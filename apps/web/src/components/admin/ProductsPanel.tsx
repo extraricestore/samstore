@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { API_URL } from "../../config";
 import { getAdminToken, adminHeaders } from "../../lib/admin";
+import LabelSheet from "./LabelSheet";
 
 export interface AdminProduct {
   id: string;
@@ -44,6 +45,9 @@ export default function ProductsPanel() {
   const [maxPrice, setMaxPrice] = useState("");
   const [active, setActive] = useState("");
   const [sort, setSort] = useState<"created" | "name" | "price" | "stock">("created");
+  // M3: batch label printing — the selected product ids open the 57 × 40 mm label sheet.
+  const [selected, setSelected] = useState<string[]>([]);
+  const [labelOpen, setLabelOpen] = useState(false);
 
   const token = () => getAdminToken();
 
@@ -147,10 +151,17 @@ export default function ProductsPanel() {
     <div>
       <div className="d-flex justify-content-between align-items-center mb-3">
         <h1 className="h4 mb-0">Products</h1>
-        <button className="btn btn-primary btn-sm" onClick={openCreate}>
+                <div className="d-flex gap-2">
+                  {selected.length > 0 && (
+                    <button className="btn btn-outline-primary btn-sm" onClick={() => setLabelOpen(true)}>
+                      <i className="bi bi-tags me-1"></i>Print labels ({selected.length})
+                    </button>
+                  )}
+                  <button className="btn btn-primary btn-sm" onClick={openCreate}>
           <i className="bi bi-plus-lg me-1"></i>New product
-        </button>
-      </div>
+                  </button>
+                  </div>
+                </div>
       {error && <div className="alert alert-danger py-2 small">{error}</div>}
 
             {/* P7 filter bar */}
@@ -193,6 +204,15 @@ export default function ProductsPanel() {
         <table className="table table-hover align-middle">
           <thead>
             <tr>
+              <th style={{ width: 32 }}>
+                <input
+                  type="checkbox"
+                  className="form-check-input"
+                  aria-label="Select all products"
+                  checked={products.length > 0 && selected.length === products.length}
+                  onChange={(e) => setSelected(e.target.checked ? products.map((p) => p.id) : [])}
+                />
+              </th>
               <th>Product</th>
               <th>SKU</th>
               <th className="text-end">Price</th>
@@ -205,6 +225,17 @@ export default function ProductsPanel() {
           <tbody>
             {products.map((p) => (
               <tr key={p.id} className={p.isActive ? "" : "table-secondary"}>
+                <td>
+                  <input
+                    type="checkbox"
+                    className="form-check-input"
+                    aria-label={`Select ${p.name}`}
+                    checked={selected.includes(p.id)}
+                    onChange={(e) =>
+                      setSelected((s) => (e.target.checked ? [...s, p.id] : s.filter((id) => id !== p.id)))
+                    }
+                  />
+                </td>
                 <td className="fw-semibold">{p.name}</td>
                 <td className="text-muted small">{p.sku}</td>
                 <td className="text-end">{toPesos(p.priceMinor)}</td>
@@ -289,6 +320,7 @@ export default function ProductsPanel() {
           <div className="modal-backdrop fade show"></div>
         </>
       )}
+      {labelOpen && <LabelSheet productIds={selected} onClose={() => setLabelOpen(false)} />}
     </div>
   );
 }

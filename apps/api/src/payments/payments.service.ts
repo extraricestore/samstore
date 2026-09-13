@@ -63,6 +63,16 @@ export class PaymentsService {
       },
     });
     if (!order) return null;
+    // M3: the printed slip must show WHAT settled the order — method labels, what was handed
+    // over, the change, the reference, and anything still outstanding.
+    const methods = await prisma.paymentMethod.findMany({ where: { storeId }, select: { code: true, label: true, kind: true } });
+    const labelOf = new Map(methods.map((m) => [m.code, m.label]));
+    const kindOf = new Map(methods.map((m) => [m.code, m.kind as string]));
+    const paidMinor = order.payments.filter((p) => p.type !== "void" && p.amountMinor > 0).reduce((s, p) => s + p.amountMinor, 0);
+    const refundedMinor = order.payments.filter((p) => p.type === "refund").reduce((s, p) => s + -p.amountMinor, 0);
+    const changeMinor = order.payments.reduce((s, p) => s + p.changeMinor, 0);
+    const net = paidMinor - refundedMinor;
+    const outstandingMinor = Math.max(0, order.totalMinor - net);
     return {
       orderId: order.id,
       orderNumber: order.orderNumber,
@@ -80,7 +90,26 @@ export class PaymentsService {
       customerPhone: order.customerPhone,
       createdAt: order.createdAt,
       items: order.items.map((i) => ({ productName: i.productName, sku: i.sku, unitPriceMinor: i.unitPriceMinor, quantity: i.quantity, lineTotalMinor: i.lineTotalMinor })),
-      payments: order.payments.map((p) => ({ id: p.id, method: p.method, amountMinor: p.amountMinor, changeMinor: p.changeMinor, type: p.type, note: p.note, receivedAt: p.receivedAt })),
+      payments: order.payments.map((p) => ({
+        id: p.id,
+        method: p.method,
+        methodLabel: labelOf.get(p.method) ?? p.method,
+        kind: kindOf.get(p.method) ?? "OTHER",
+        amountMinor: p.amountMinor,
+        tenderedMinor: p.tenderedMinor,
+        changeMinor: p.changeMinor,
+        reference: p.reference,
+        type: p.type,
+        note: p.note,
+        receivedAt: p.receivedAt,
+      })),
+      tenders: {
+        paidMinor,
+        refundedMinor,
+        changeMinor,
+        outstandingMinor,
+        settlement: order.totalMinor === 0 ? "PAID" : net <= 0 ? "UNPAID" : outstandingMinor > 0 ? "PARTIAL" : "PAID",
+      },
     };
   }
 
