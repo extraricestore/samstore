@@ -188,6 +188,22 @@ export default function Storefront({ store, products }: StorefrontProps) {
                 <p className="text-muted small mb-2">Thanks for ordering from {store.name}.</p>
                 <div className="h3 fw-bold text-primary">{lastOrder.orderNumber}</div>
                 <p className="mb-1">Total <strong>{toPesos(lastOrder.totalMinor)}</strong> · Cash on delivery</p>
+                {(lastOrder.removedProductIds?.length ?? 0) > 0 && (
+                  <div className="alert alert-warning py-2 small text-start mb-2" role="status">
+                    <i className="bi bi-exclamation-triangle me-1"></i>
+                    {lastOrder.removedProductIds!.length === 1 ? "1 item became" : `${lastOrder.removedProductIds!.length} items became`} unavailable and
+                    {lastOrder.removedProductIds!.length === 1 ? " was" : " were"} removed from your order.
+                  </div>
+                )}
+                {(lastOrder.priceChanges?.length ?? 0) > 0 && (
+                  <div className="alert alert-info py-2 small text-start mb-2" role="status">
+                    <i className="bi bi-info-circle me-1"></i>
+                    A price changed while you were ordering — your total reflects the current price
+                    {lastOrder.priceChanges!.length === 1
+                      ? ` (was ${toPesos(lastOrder.priceChanges![0]!.fromMinor)}, now ${toPesos(lastOrder.priceChanges![0]!.toMinor)}).`
+                      : ` for ${lastOrder.priceChanges!.length} items.`}
+                  </div>
+                )}
                 <OrderTracker initialToken={lastOrder.claimToken} />
                 <div className="d-grid gap-2 mt-3">
                   <button

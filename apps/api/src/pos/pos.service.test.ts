@@ -72,6 +72,10 @@ async function cleanupFixture(storeId: string, customerId: string) {
   await prisma.product.deleteMany({ where: { storeId } });
   await prisma.storeSettings.deleteMany({ where: { storeId } });
   await prisma.storeCustomer.deleteMany({ where: { storeId } });
+  // Fix #2: createAtomic writes the outbox event in-transaction and the live
+  // worker drains it into a NotificationLog row — clear both before the store.
+  await prisma.outboxEvent.deleteMany({ where: { id: storeId } });
+  await prisma.notificationLog.deleteMany({ where: { id: storeId } });
   await prisma.store.deleteMany({ where: { id: storeId } });
   await prisma.customer.deleteMany({ where: { id: customerId } });
 }

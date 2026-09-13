@@ -1,6 +1,33 @@
 # SAM STORE — Progress Log
 
-Updated: 2026-09-11 · **Project hardening Modules 1–11 ALL COMPLETE + Playwright E2E** · Active model: `deepseek/deepseek-v4-flash-0731` (openrouter)
+Updated: 2026-09-13 · **Hardening Modules 1–11 + audit remediation (fixes 1–5) + Playwright E2E** · Active model: `deepseek/deepseek-v4.1-flash` (openrouter)
+
+## Audit remediation (re-verified the 11 modules against the prompt's bullets)
+
+| Fix | What it closed | Commit |
+|---|---|---|
+| **1 stock atomicity** | `deductStock` + checkout reservation are now guarded DB-boundary writes (`WHERE quantityOnHand >= take` / `onHand - reserved >= qty`) with a typed `InsufficientStockError` → 409 via a global filter. Checkout previously had **no** availability enforcement at all. Prisma gets a global transaction budget (30s/15s maxWait — a cold pooler beat the 5s default: `P2028` observed live). | `623ab12` |
+| **2 transactional outbox** | the `order.received` event is written INSIDE `createAtomic` (was post-commit fire-and-forget); a committed order always has its event, and the loser's rolled-back attempt writes none | `623ab12` |
+| **3 runtime DTO validation** | dependency-free schema checker wired into every untrusted boundary: checkout, cart add/update, claim, register, login, change-password, public store lookup. Unknown keys are rejected (a client-supplied `role`/`storeId`/`totalMinor` is now a 422) | `de15bb0` |
+| **4 reconciliation** | `domain/reconcile.ts` + `scripts/reconcile.ts` check all four identities (voucher counter, loyalty, credit, on-hand stock) — dry-run by default, exit 1 on drift. Replaces `reconcile-stock.ts`. `scripts/cleanup-test-fixtures.ts` removes leaked test fixtures | `2c79b4f` |
+| **5 ops** | request ids (`X-Request-Id`), structured REDACTED logs (no query strings — public tokens live there), `/health/metrics` (counters + outbox backlog), `npm run lint` (typecheck + secret scan), `npm run test:cov`, CI workflow, recursive test glob | (this commit) |
+
+### Test-gate correction
+`scripts/run-tests.mjs` used an explicit per-directory pattern list and silently skipped
+`persistence/`, `security/`, `orders/` and `public/` — the M2/M4/M5 test files never ran
+in the aggregate gate. It now globs `apps/api/src/**/*.test.ts` recursively (**39 → 40 files**).
+
+### Live findings from the remediation
+- **Reconciliation found real drift on the dev DB**: 46 rows, dominated by leaked test
+  fixtures (aborted runs skip their `after()` hook: `m5…-store`, `tzo-*`, `obx*`) plus five
+  `POS Test Customer` credit balances whose ledger rows were deleted by earlier cleanups.
+  `npm run reconcile` (dry-run) reports them; `npm run fixtures:cleanup --apply` and
+  `npm run reconcile --apply` fix them (both need an operator go-ahead before applying).
+- **My own reconcile identity was wrong first**: RESERVE movements move `quantityReserved`,
+  not on-hand, so summing them reported a phantom drift of exactly the reserved quantity
+  (HALO-001: "34 vs 40"). Fixed + regression-tested.
+- **`.env.example` false positive** in the secret scan (placeholder `USER:PASSWORD@HOST`) —
+  the rule now ignores documented placeholders.
 
 ## Playwright critical-path E2E (`b013fd5`)
 

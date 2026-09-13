@@ -57,6 +57,10 @@ after(async () => {
     }
     await prisma.stockLevel.deleteMany({ where: { productId: { in: createdIds } } });
     await prisma.product.deleteMany({ where: { id: { in: createdIds } } });
+    // Fix #2: createAtomic writes the outbox event in-transaction and the live
+    // worker drains it into a NotificationLog row — clear both before the store.
+    await prisma.outboxEvent.deleteMany({ where: { storeId: { in: createdIds } } });
+    await prisma.notificationLog.deleteMany({ where: { storeId: { in: createdIds } } });
     await prisma.store.deleteMany({ where: { id: { in: createdIds } } });
   }
   await prisma.$disconnect();

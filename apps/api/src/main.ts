@@ -13,6 +13,7 @@ import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module.js";
 import { rateLimitOk, clientKey } from "./security/rate-limit.js";
 import { InsufficientStockFilter } from "./security/domain-exception.filter.js";
+import { logRequest, recordRequest, sanitizeRequestId } from "./security/observability.js";
 
 const PORT = Number(process.env.PORT ?? 4000);
 const NODE_ENV = (process.env.NODE_ENV ?? "development").toLowerCase();
@@ -48,6 +49,28 @@ async function bootstrap() {
 
   app.use(express.json({ limit: "5mb" }));
   app.use(express.urlencoded({ extended: true, limit: "5mb" }));
+
+  // Observability: request id (echoed back) + one structured REDACTED log line per
+  // request. `req.path` excludes the query string on purpose — public links carry
+  // their access token there and it must never reach the logs.
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const incoming = req.headers["x-request-id"];
+    const requestId = sanitizeRequestId(Array.isArray(incoming) ? incoming[0] : incoming);
+    (req as Request & { id?: string }).id = requestId;
+    res.setHeader("X-Request-Id", requestId);
+    const start = Date.now();
+    res.on("finish", () => {
+      recordRequest(res.statusCode);
+      logRequest({
+        requestId,
+        method: req.method,
+        path: (req as Request & { path?: string }).path ?? req.url?.split("?")[0] ?? "/",
+        status: res.statusCode,
+        durationMs: Date.now() - start,
+      });
+    });
+    next();
+  });
 
   // Basic security headers (no external dependency).
   app.use((req: Request, res: Response, next: NextFunction) => {

@@ -133,6 +133,11 @@ export interface CheckoutResponse {
   currencyCode: string;
   /** temporary claim token so the guest can reopen the order; single-use */
   claimToken: string;
+  /** products whose price changed between cart and checkout (new prices applied);
+   *  surfaced to the customer so a changed total is never a surprise (AGENTS.md). */
+  priceChanges?: { productId: string; fromMinor: number; toMinor: number }[];
+  /** products that became unavailable and were dropped from the order. */
+  removedProductIds?: string[];
 }
 
 // ─────────────────────────────── POS (counter sales) ───────────────────────────────

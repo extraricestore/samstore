@@ -22,7 +22,12 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:seed": "tsx prisma/seed.ts",
-    "test:e2e": "playwright test --config apps/api/playwright.config.ts"
+    "test:e2e": "playwright test --config apps/api/playwright.config.ts",
+    "lint": "npm run typecheck && npm run check:secrets",
+    "check:secrets": "node scripts/check-secrets.mjs",
+    "test:cov": "node scripts/run-tests.mjs --coverage",
+    "reconcile": "tsx scripts/reconcile.ts",
+    "fixtures:cleanup": "tsx scripts/cleanup-test-fixtures.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",

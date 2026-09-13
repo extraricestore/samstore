@@ -38,6 +38,10 @@ after(async () => {
     }
     if (ids.vouchers.length) await prisma.voucher.deleteMany({ where: { id: { in: ids.vouchers } } });
     if (ids.customers.length) await prisma.customer.deleteMany({ where: { id: { in: ids.customers } } });
+    // Fix #2: createAtomic writes the outbox event in-transaction and the live
+    // worker drains it into a NotificationLog row — clear both before the store.
+    await prisma.outboxEvent.deleteMany({ where: { storeId: { in: s } } });
+    await prisma.notificationLog.deleteMany({ where: { storeId: { in: s } } });
     await prisma.store.deleteMany({ where: { id: { in: s } } });
   }
   await prisma.$disconnect();

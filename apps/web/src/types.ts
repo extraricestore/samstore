@@ -89,4 +89,8 @@ export interface CheckoutResponse {
   totalMinor: number;
   currencyCode: string;
   claimToken: string;
+  /** present when the server re-priced the cart at checkout time */
+  priceChanges?: { productId: string; fromMinor: number; toMinor: number }[];
+  /** present when an item became unavailable and was dropped */
+  removedProductIds?: string[];
 }

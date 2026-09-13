@@ -12,30 +12,18 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
-const PATTERNS = [
-  "apps/api/src/domain/*.test.ts",
-  "apps/api/src/checkout/*.test.ts",
-  "apps/api/src/cart/*.test.ts",
-  "apps/api/src/auth/*.test.ts",
-  "apps/api/src/messenger/*.test.ts",
-  "apps/api/src/notifications/*.test.ts",
-  "apps/api/src/admin/*.test.ts",
-  "apps/api/src/pos/*.test.ts",
-  "apps/api/src/payments/*.test.ts",
-  "apps/api/src/credit/*.test.ts",
-  "apps/api/src/expenses/*.test.ts",
-  "apps/api/src/purchases/*.test.ts",
-  "apps/api/src/inventory/*.test.ts",
-  "apps/api/src/reports/*.test.ts",
-  "apps/api/src/delivery/*.test.ts",
-];
-
-const files = PATTERNS.flatMap((p) => globSync(p)).filter((f) => f.endsWith(".test.ts")).sort();
-console.log(`# running ${files.length} test files sequentially\n`);
+// Recursive glob: an explicit per-directory list silently SKIPPED whole folders
+// (persistence/, security/, orders/, public/ ...) — tests that never ran in the gate.
+const files = globSync("apps/api/src/**/*.test.ts").filter((f) => f.endsWith(".test.ts")).sort();
+const coverage = process.argv.includes("--coverage");
+console.log(`# running ${files.length} test files sequentially${coverage ? " (with coverage)" : ""}\n`);
 
 const failedFiles = [];
 for (const file of files) {
-  const res = spawnSync(process.execPath, ["--import", "tsx", "--test", file], {
+  const args = ["--import", "tsx", "--test"];
+  if (coverage) args.push("--experimental-test-coverage");
+  args.push(file);
+  const res = spawnSync(process.execPath, args, {
     stdout: "pipe",
     stderr: "inherit",
     cwd: ROOT,

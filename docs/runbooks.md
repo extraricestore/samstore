@@ -21,13 +21,24 @@ Never rebuild `.next` while a `next start` is serving it (stale-chunk client err
 ## Gates
 
 ```bash
-npm run typecheck   # contracts + api + web
-npm test            # sequential runner (scripts/run-tests.mjs) — NEVER the raw node --test
-                    # (it runs files concurrently and exhausts the Supabase pool: pool_size 15)
-npm run test:e2e    # Playwright critical-path suite (needs both servers up on :3000/:4100)
+npm run typecheck     # contracts + api + web
+npm test              # sequential runner (scripts/run-tests.mjs) — NEVER the raw node --test
+                      # (it runs files concurrently and exhausts the Supabase pool: pool_size 15)
+npm run test:cov      # same runner + node's built-in coverage (--experimental-test-coverage)
+npm run test:e2e      # Playwright critical-path suite (needs both servers up on :3000/:4100)
+npm run lint          # typecheck + secret/PII scan (filenames + categories only)
+npm run check:secrets # secret scan alone (exit 1 on a HIGH finding)
 npm run build
 npm run db:validate
 ```
+
+The runner globs `apps/api/src/**/*.test.ts` recursively — an earlier per-directory
+pattern list silently skipped `persistence/`, `security/`, `orders/` and `public/`.
+
+CI (`.github/workflows/ci.yml`): the `quality` job (schema validate, typecheck, secret
+scan, build) runs on every push/PR with no database. The `db-tests` job runs the
+sequential gate + `scripts/reconcile.ts` only when the `DATABASE_URL` repository secret
+is configured; the Playwright job is manual (`workflow_dispatch`).
 
 E2E suite (`apps/api/e2e/`): API health + public-link access control, admin login →
 dashboard, and the full customer journey (storefront → cart → 3-step delivery COD
@@ -45,9 +56,24 @@ idempotent across re-runs (it claims the fresh order it just placed).
 ## Health
 
 ```bash
-curl http://localhost:4100/health        # liveness (no DB)
-curl http://localhost:4100/health/ready  # readiness (SELECT 1; 503 when degraded)
+curl http://localhost:4100/health          # liveness (no DB)
+curl http://localhost:4100/health/ready    # readiness (SELECT 1; 503 when degraded)
+curl http://localhost:4100/health/metrics  # request counters + outbox backlog
 ```
+
+`/health/metrics` reports request counts by status class, conflicts, 429s, and the
+outbox backlog (`pending`, `processed`, `failed`, `oldestPendingSec`). A rising
+`oldestPendingSec` means the worker is not draining — check the API process.
+
+## Logging & request ids
+
+Every request gets a `X-Request-Id` response header (a client-supplied id is accepted
+only if it matches `[A-Za-z0-9._:-]{8,64}`) and one structured JSON line on stdout:
+`{ts, level, msg:"request", requestId, method, path, status, durationMs}`.
+
+Logs deliberately contain **no query string** — public links carry their access token
+there — and never bodies, signatures, phone numbers or addresses. When chasing an
+incident, grep by `requestId`.
 
 ## Reconciliation
 
