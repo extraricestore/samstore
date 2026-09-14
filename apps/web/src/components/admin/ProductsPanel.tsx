@@ -12,6 +12,7 @@ export interface AdminProduct {
   description: string | null;
   priceMinor: number;
   isActive: boolean;
+  taxExempt: boolean;
   category: { id: string; name: string; slug: string } | null;
   quantityOnHand: number;
   quantityReserved: number;
@@ -26,9 +27,11 @@ interface ProductForm {
   stock: string;
   categorySlug: string;
   description: string;
+  /** M4: VAT-exempt product (basic/zero-rated goods). */
+  taxExempt: boolean;
 }
 
-const EMPTY_FORM: ProductForm = { name: "", sku: "", priceMinor: "", stock: "", categorySlug: "", description: "" };
+const EMPTY_FORM: ProductForm = { name: "", sku: "", priceMinor: "", stock: "", categorySlug: "", description: "", taxExempt: false };
 
 export default function ProductsPanel() {
   const [products, setProducts] = useState<AdminProduct[]>([]);
@@ -96,6 +99,7 @@ export default function ProductsPanel() {
       stock: p.quantityOnHand.toString(),
       categorySlug: p.category?.slug ?? "",
       description: p.description ?? "",
+      taxExempt: p.taxExempt ?? false,
     });
     setModal({ open: true, editing: p });
   };
@@ -113,6 +117,7 @@ export default function ProductsPanel() {
         stock: form.stock === "" ? undefined : parseInt(form.stock, 10),
         categorySlug: form.categorySlug || undefined,
         description: form.description || undefined,
+        taxExempt: form.taxExempt,
       };
       const res = await fetch(
         `${API_URL}/admin/products${modal.editing ? `/${modal.editing.id}` : ""}`,
@@ -247,6 +252,7 @@ export default function ProductsPanel() {
                 <td>
                   <span className={`badge ${p.isActive ? "text-bg-success" : "text-bg-secondary"}`}>
                     {p.isActive ? "Active" : "Hidden"}
+                      {p.taxExempt && <span className="badge text-bg-info ms-1" title="VAT-exempt">VAT-exempt</span>}
                   </span>
                 </td>
                 <td className="text-end">
@@ -305,6 +311,10 @@ export default function ProductsPanel() {
                     <div className="mb-2">
                       <label className="form-label small">Description</label>
                       <textarea className="form-control" rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+                    <div className="form-check form-switch mt-2">
+                      <input className="form-check-input" type="checkbox" id="taxExempt" checked={form.taxExempt} onChange={(e) => setForm({ ...form, taxExempt: e.target.checked })} />
+                      <label className="form-check-label" htmlFor="taxExempt">VAT-exempt product <span className="text-muted small">(basic/zero-rated goods — reported as non-VAT sales on the BIR slip)</span></label>
+                    </div>
                     </div>
                   </div>
                   <div className="modal-footer">

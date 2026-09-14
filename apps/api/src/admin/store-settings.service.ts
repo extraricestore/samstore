@@ -21,6 +21,12 @@ export interface StoreSettingsInput {
   receiptHeader?: string | null; // P11
   receiptFooter?: string | null; // P11
   showVatLabel?: boolean; // P11
+  // M4 tax engine (decisions locked 2026-09-14).
+  vatEnabled?: boolean; // master switch — off reproduces pre-M4 totals exactly
+  vatRateBp?: number; // 1200 = 12% PH VAT
+  pricesIncludeVat?: boolean; // catalogue prices already contain the VAT
+  vatShowOnReceipt?: boolean; // owner may HIDE the VAT lines on the printed slip
+  tin?: string | null; // BIR taxpayer ID printed on the slip
   dailySalesTargetMinor?: number; // Overview: daily sales target (0 = off)
   hidePricePreOrder?: boolean; // P11: hide per-product prices in Pre Orders screen
 }
@@ -60,6 +66,11 @@ export class StoreSettingsService {
         receiptHeader: store.settings?.receiptHeader ?? null,
         receiptFooter: store.settings?.receiptFooter ?? null,
         showVatLabel: store.settings?.showVatLabel ?? true,
+        vatEnabled: store.settings?.vatEnabled ?? true,
+        vatRateBp: store.settings?.vatRateBp ?? 1200,
+        pricesIncludeVat: store.settings?.pricesIncludeVat ?? true,
+        vatShowOnReceipt: store.settings?.vatShowOnReceipt ?? true,
+        tin: store.settings?.tin ?? null,
         dailySalesTargetMinor: store.settings?.dailySalesTargetMinor ?? 0,
         hidePricePreOrder: store.settings?.hidePricePreOrder ?? false,
       },
@@ -98,6 +109,11 @@ export class StoreSettingsService {
         ...(input.receiptHeader !== undefined ? { receiptHeader: input.receiptHeader } : {}),
         ...(input.receiptFooter !== undefined ? { receiptFooter: input.receiptFooter } : {}),
         ...(input.showVatLabel !== undefined ? { showVatLabel: input.showVatLabel } : {}),
+        ...(input.vatEnabled !== undefined ? { vatEnabled: input.vatEnabled } : {}),
+        ...(input.vatRateBp !== undefined ? { vatRateBp: input.vatRateBp } : {}),
+        ...(input.pricesIncludeVat !== undefined ? { pricesIncludeVat: input.pricesIncludeVat } : {}),
+        ...(input.vatShowOnReceipt !== undefined ? { vatShowOnReceipt: input.vatShowOnReceipt } : {}),
+        ...(input.tin !== undefined ? { tin: input.tin } : {}),
         ...(input.dailySalesTargetMinor !== undefined ? { dailySalesTargetMinor: input.dailySalesTargetMinor } : {}),
         ...(input.hidePricePreOrder !== undefined ? { hidePricePreOrder: input.hidePricePreOrder } : {}),
       },

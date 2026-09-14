@@ -9,6 +9,7 @@ import type { CheckoutRequest, CheckoutResponse, ApiError } from "@sam-store/con
 import { validateCheckoutInput } from "../domain/checkout-validation.js";
 import { revalidateCartLines, CartRevalidationError } from "../domain/cart.js";
 import { computeOrderTotals, InvalidPriceInputError } from "../domain/pricing.js";
+import { taxColumnsFor } from "../domain/tax-store.js";
 import { normalizeIdempotencyKey, InvalidIdempotencyKeyError } from "../domain/idempotency.js";
 import { formatOrderNumber } from "../domain/order-number.js";
 import { InsufficientStockError } from "../domain/movements.js";
@@ -269,6 +270,13 @@ export class CheckoutService {
       deliveryFeeMinor: totals.deliveryFeeMinor,
       discountMinor: discountMinor, // voucher discount (0 when none)
       totalMinor: finalTotal,
+      // M4: VAT frozen with the sale — the discount already came off the VATable base, and the
+      // delivery fee is excluded from it (decision 2).
+      ...(await taxColumnsFor(
+        store.id,
+        revalidated.lines.map((l: any) => ({ productId: l.productId ?? null, lineTotalMinor: l.lineTotalMinor ?? l.unitPriceMinor * l.quantity })),
+        { discountMinor, deliveryFeeMinor: totals.deliveryFeeMinor, settingsOverride: store },
+      )),
       snapshot: {
         lines: revalidated.lines,
         items,

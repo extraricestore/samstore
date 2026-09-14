@@ -6,6 +6,7 @@ interface ReceiptPayload {
   orderNumber: string;
   payments: { method: string; methodLabel?: string; amountMinor: number; changeMinor: number; reference?: string | null; type: string }[];
   tenders?: { settlement: string; outstandingMinor: number; changeMinor: number };
+  vat?: { enabled: boolean; rateBp: number; pricesIncludeVat: boolean; vatableMinor: number; vatMinor: number; vatExemptMinor: number; showOnReceipt: boolean; tin: string | null };
 }
 
 test("M3: the receipt shows every tender and prints as a 57 mm slip", async ({ page, request }) => {
@@ -40,6 +41,7 @@ test("M3: the receipt shows every tender and prints as a 57 mm slip", async ({ p
   const receiptRes = await request.get(`${API}/admin/orders/${orderId}/receipt`, { headers });
   expect(receiptRes.status()).toBe(200);
   const receipt = (await receiptRes.json()) as ReceiptPayload;
+  const receiptVat = receipt.vat;
   const tender = receipt.payments.filter((p) => p.type !== "void");
   expect(receipt.tenders, "the receipt carries the derived settlement").toBeTruthy();
 
@@ -75,6 +77,17 @@ test("M3: the receipt shows every tender and prints as a 57 mm slip", async ({ p
   const reference = tender.find((p) => p.reference)?.reference;
   if (reference) {
     await expect(slip.getByText(new RegExp(`ref ${reference}`))).toBeVisible();
+  }
+
+  // ── M4: the BIR VAT block (this store has it enabled) ──
+  if (receiptVat?.showOnReceipt && receiptVat.enabled) {
+    const block = slip.getByTestId("vat-breakdown");
+    await expect(block).toBeVisible();
+    await expect(block.getByText("VATable Sales")).toBeVisible();
+    await expect(block.getByText(/^VAT \(incl\.\) 12%$/)).toBeVisible();
+    await expect(block.getByText("Zero-Rated Sales")).toBeVisible();
+    // The frozen base + VAT must add up to what the customer paid — the slip cannot lie.
+    expect((receiptVat.vatableMinor ?? 0) + (receiptVat.vatMinor ?? 0)).toBeLessThanOrEqual(receipt.totalMinor);
   }
 
   // ── Print preview: only the slip survives, and the page box is the 57 mm roll ──

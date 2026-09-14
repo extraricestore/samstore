@@ -509,7 +509,7 @@ M1  Split payments in the REAL money paths  (4 steps: one writer -> POS tenders 
 [x]   M1.4 e2e/07-split-payment.spec.ts (real staff flow)  (this commit)
 [x] M2  Stock Adjustment + Adjustment History + Stock Flow screens (reuse the existing ADJUST path)  `e485126` + (this commit)
 [x] M3  Receipts & labels (57mm + 57x40mm label sheet)  (this commit)
-[ ] M4  Tax engine — PH VAT 12% incl/excl + exempt, BIR receipt, 4 snapshot writers
+[x] M4  Tax engine — PH VAT 12% incl/excl + exempt, BIR receipt, 4 snapshot writers  (this commit)
 [ ] M5  Product barcode + unit fields (+POS scan input)
 [ ] M6  Suppliers master (+ backfill Purchase.vendor)
 [ ] M7  Roles x permissions matrix screen

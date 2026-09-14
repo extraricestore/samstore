@@ -39,6 +39,10 @@ type StoreWithSettings = NonNullable<Awaited<ReturnType<PrismaClient["store"]["f
     deliveryEnabled: boolean;
     pickupEnabled: boolean;
     minOrderAmountMinor: number;
+    // M4: VAT configuration travels with the store record so checkout never needs a second read.
+    vatEnabled: boolean;
+    vatRateBp: number;
+    pricesIncludeVat: boolean;
   } | null;
 };
 
@@ -61,6 +65,9 @@ export class PrismaStoreRepository implements StoreRepository {
       deliveryEnabled: settings?.deliveryEnabled ?? true,
       pickupEnabled: settings?.pickupEnabled ?? false,
       minOrderAmountMinor: settings?.minOrderAmountMinor ?? 0,
+      vatEnabled: settings?.vatEnabled ?? true,
+      vatRateBp: settings?.vatRateBp ?? 1200,
+      pricesIncludeVat: settings?.pricesIncludeVat ?? true,
       accentColor: s.accentColor,
       bannerText: s.bannerText,
       logoUrl: s.logoUrl,
@@ -301,6 +308,11 @@ export class PrismaOrderRepository implements OrderRepository {
           deliveryFeeMinor: order.deliveryFeeMinor,
           discountMinor: order.discountMinor,
           totalMinor: order.totalMinor,
+          // M4: the tax breakdown travels with the order into the DB (not just the domain record).
+          vatableMinor: order.vatableMinor ?? 0,
+          vatMinor: order.vatMinor ?? 0,
+          vatExemptMinor: order.vatExemptMinor ?? 0,
+          vatRateBp: order.vatRateBp ?? 0,
           snapshot: order.snapshot as object,
           paymentMethod: order.paymentMethod,
           paymentStatus: order.paymentStatus as PaymentStatus,
@@ -377,6 +389,11 @@ export class PrismaOrderRepository implements OrderRepository {
           deliveryFeeMinor: order.deliveryFeeMinor,
           discountMinor: order.discountMinor,
           totalMinor: order.totalMinor,
+          // M4: the tax breakdown travels with the order into the DB (not just the domain record).
+          vatableMinor: order.vatableMinor ?? 0,
+          vatMinor: order.vatMinor ?? 0,
+          vatExemptMinor: order.vatExemptMinor ?? 0,
+          vatRateBp: order.vatRateBp ?? 0,
           snapshot: order.snapshot as object,
           paymentMethod: order.paymentMethod,
           paymentStatus: order.paymentStatus as PaymentStatus,

@@ -66,6 +66,11 @@ export class PaymentsService {
     // M3: the printed slip must show WHAT settled the order — method labels, what was handed
     // over, the change, the reference, and anything still outstanding.
     const methods = await prisma.paymentMethod.findMany({ where: { storeId }, select: { code: true, label: true, kind: true } });
+    // M4: the owner's VAT display preferences (read after `methods` — sequential reads only).
+    const vatSettings = await prisma.storeSettings.findUnique({
+      where: { storeId },
+      select: { vatEnabled: true, vatRateBp: true, pricesIncludeVat: true, vatShowOnReceipt: true, showVatLabel: true, tin: true },
+    });
     const labelOf = new Map(methods.map((m) => [m.code, m.label]));
     const kindOf = new Map(methods.map((m) => [m.code, m.kind as string]));
     const paidMinor = order.payments.filter((p) => p.type !== "void" && p.amountMinor > 0).reduce((s, p) => s + p.amountMinor, 0);
@@ -109,6 +114,18 @@ export class PaymentsService {
         changeMinor,
         outstandingMinor,
         settlement: order.totalMinor === 0 ? "PAID" : net <= 0 ? "UNPAID" : outstandingMinor > 0 ? "PARTIAL" : "PAID",
+      },
+      // M4: the VAT breakdown frozen at checkout + the owner's slip preferences. `showOnReceipt`
+      // is display-only — hiding the lines never changes a total.
+      vat: {
+        enabled: vatSettings?.vatEnabled ?? true,
+        rateBp: order.vatRateBp,
+        pricesIncludeVat: vatSettings?.pricesIncludeVat ?? true,
+        vatableMinor: order.vatableMinor,
+        vatMinor: order.vatMinor,
+        vatExemptMinor: order.vatExemptMinor,
+        showOnReceipt: (vatSettings?.vatShowOnReceipt ?? true) && (vatSettings?.showVatLabel ?? true),
+        tin: vatSettings?.tin ?? null,
       },
     };
   }

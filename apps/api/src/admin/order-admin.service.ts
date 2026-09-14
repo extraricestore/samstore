@@ -5,6 +5,7 @@ import { cacheBust, cacheKey } from "../persistence/ttl-cache.js";
 import { deductStock, restoreStock } from "../domain/movements.js";
 import { assertTransition, paymentEffectFor, type OrderState } from "../domain/order-state.js";
 import { computeOrderTotals } from "../domain/pricing.js";
+import { taxColumnsFor } from "../domain/tax-store.js";
 import { LoyaltyService } from "../loyalty/loyalty.service.js";
 import type { NotificationsService } from "../notifications/notifications.service.js";
 import type { ApiError } from "@sam-store/contracts";
@@ -168,7 +169,16 @@ export class OrderAdminService {
       });
       await tx.order.update({
         where: { id: orderId },
-        data: { subtotalMinor: totals.subtotalMinor, totalMinor: totals.totalMinor + order.deliveryFeeMinor - order.discountMinor, snapshot: { lines: newLines, source: order.source, paymentMethod: order.paymentMethod } as object },
+        data: {
+          subtotalMinor: totals.subtotalMinor,
+          totalMinor: totals.totalMinor + order.deliveryFeeMinor - order.discountMinor,
+          // M4: re-freeze the VAT breakdown — the edited basket may carry different exemptions.
+          ...(await taxColumnsFor(storeId, newLines.map((l) => ({ productId: l.productId, lineTotalMinor: l.lineTotalMinor })), {
+            discountMinor: order.discountMinor,
+            deliveryFeeMinor: order.deliveryFeeMinor,
+          })),
+          snapshot: { lines: newLines, source: order.source, paymentMethod: order.paymentMethod } as object,
+        },
       });
       await tx.orderStatusHistory.create({
         data: { orderId, storeId, fromStatus: order.status, toStatus: order.status, reason: "items edited", actorType: "admin", actorId: null },

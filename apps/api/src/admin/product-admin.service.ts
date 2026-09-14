@@ -47,6 +47,7 @@ export class ProductAdminService {
       priceMinor: p.priceMinor,
       costMinor: p.costMinor,
       isActive: p.isActive,
+      taxExempt: p.taxExempt,
       category: p.category,
       quantityOnHand: onHand,
       quantityReserved: reserved,
@@ -83,6 +84,7 @@ export class ProductAdminService {
         description: input.description?.trim() ?? null,
         priceMinor: input.priceMinor,
         isActive: input.isActive ?? true,
+        taxExempt: input.taxExempt ?? false,
         categoryId,
       },
     });
@@ -124,6 +126,7 @@ export class ProductAdminService {
           description: input.description !== undefined ? input.description?.trim() ?? null : product.description,
           priceMinor: input.priceMinor ?? product.priceMinor,
           isActive: input.isActive ?? product.isActive,
+          taxExempt: input.taxExempt ?? product.taxExempt,
           ...(input.categorySlug !== undefined
             ? { categoryId: input.categorySlug ? (await tx.category.findUnique({ where: { storeId_slug: { storeId, slug: input.categorySlug } } }))?.id ?? null : null }
             : {}),

@@ -11,6 +11,7 @@ import { deductStock, restoreStock as restoreStockLedger } from "../domain/movem
 import { RegisterService } from "../registers/register.service.js";
 import { PrismaOrderSequenceRepository } from "../persistence/prisma-repositories.js";
 import { computeOrderTotals } from "../domain/pricing.js";
+import { taxColumnsFor } from "../domain/tax-store.js";
 import { formatOrderNumber } from "../domain/order-number.js";
 import { randomId } from "../persistence/repositories.js";
 import { CreditService } from "../credit/credit.service.js";
@@ -138,11 +139,19 @@ export class PosService {
       productId: l.productId, productName: l.name, sku: l.sku, unitPriceMinor: l.unitPriceMinor,
       quantity: l.quantity, lineTotalMinor: l.unitPriceMinor * l.quantity,
     }));
+    // M4: freeze the VAT breakdown with the sale. POS orders carry no delivery fee, and the
+    // discount (voucher/loyalty) is applied to the VATable base before tax.
+    const taxCols = await taxColumnsFor(
+      storeId,
+      items.map((i) => ({ productId: i.productId, lineTotalMinor: i.lineTotalMinor })),
+      { discountMinor, deliveryFeeMinor: 0 },
+    );
     await tx.order.create({
       data: {
         id: data.id, orderNumber: data.orderNumber, storeId, status: data.status, source,
         currencyCode: data.currencyCode, subtotalMinor: data.totals.subtotalMinor, deliveryFeeMinor: 0,
         discountMinor, totalMinor: finalTotal,
+        ...taxCols,
         snapshot: {
           lines: items, source: source.toLowerCase(), paymentMethod: data.paymentMethod,
           ...(discountMinor > 0 ? { discountMinor } : {}),

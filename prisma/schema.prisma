@@ -194,6 +194,13 @@ model StoreSettings {
   receiptHeader            String? // P11: printed at top of receipts
   receiptFooter            String? // P11: printed at bottom
   showVatLabel             Boolean  @default(true) // P11: display-only VAT note (decision #2)
+  // M4 tax engine. Defaults reproduce today's totals exactly: VAT is extracted for display and
+  // the printed slip can hide it, so turning `vatEnabled` off is a true kill switch.
+  vatEnabled               Boolean  @default(true) // compute + snapshot VAT
+  vatRateBp                Int      @default(1200) // basis points: 1200 = 12% PH VAT
+  pricesIncludeVat         Boolean  @default(true) // catalogue prices already contain the VAT (decision #1)
+  vatShowOnReceipt         Boolean  @default(true) // store owner may HIDE the VAT lines (decision #1b)
+  tin                      String? // BIR taxpayer identification number, printed on the slip
   requireOpenShift         Boolean  @default(true) // N1: counter cash sales require an open register shift
   dailySalesTargetMinor    Int      @default(0) // Overview: daily sales target (0 = off)
   hidePricePreOrder        Boolean  @default(false) // Hide per-product prices in Pre Orders screen
@@ -252,6 +259,7 @@ model Product {
   name        String
   description String?
   priceMinor  Int // integer minor units; NEVER float
+  taxExempt   Boolean   @default(false) // M4: VAT-exempt line (e.g. basic goods / zero-rated)
   costMinor   Int       @default(0) // latest purchase cost (P5) — feeds COGS/profit (P10)
   isActive    Boolean   @default(true)
   createdAt   DateTime  @default(now())
@@ -657,6 +665,11 @@ model Order {
   discountMinor        Int           @default(0)
   totalMinor           Int
   snapshot             Json // immutable product names/SKUs/prices at purchase; catalog edits never change history
+  // M4: immutable tax breakdown of this sale, frozen with the order like every other money field.
+  vatableMinor         Int           @default(0) // net-of-VAT base (prices inclusive) or pre-VAT base (exclusive)
+  vatMinor             Int           @default(0) // the VAT amount extracted/added
+  vatExemptMinor       Int           @default(0) // VAT-exempt sales in this order
+  vatRateBp            Int           @default(0) // the rate applied at the time of sale (0 = not taxed)
   paymentMethod        String        @default("cod")
   paymentStatus        PaymentStatus @default(PENDING)
   idempotencyKey       String?       @unique // sha256 per apps/api/src/domain/idempotency.ts

@@ -28,7 +28,18 @@ interface ReceiptData {
     amountMinor: number; tenderedMinor?: number | null; changeMinor: number;
     reference?: string | null; type: string; note: string | null; receivedAt: string;
   }[];
-  tenders?: { paidMinor: number; refundedMinor: number; changeMinor: number; outstandingMinor: number; settlement: string };
+  tenders?: { paidMinor: number; refundedMinor: number; changeMinor: number; outstandingMinor: number; settlement: "PAID" | "PARTIAL" | "UNPAID" };
+  // M4: the frozen VAT breakdown + the owner's display preference for the slip.
+  vat?: {
+    enabled: boolean;
+    rateBp: number;
+    pricesIncludeVat: boolean;
+    vatableMinor: number;
+    vatMinor: number;
+    vatExemptMinor: number;
+    showOnReceipt: boolean;
+    tin: string | null;
+  };
 }
 
 function useReceipt(orderId: string) {
@@ -98,7 +109,38 @@ export default function ReceiptModal({ orderId, onClose }: { orderId: string; on
                       <div className="d-flex justify-content-between text-danger"><span>Discount</span><span>-{pesos(data.discountMinor)}</span></div>
                     )}
                     <div className="d-flex justify-content-between fw-bold"><span>TOTAL</span><span>{pesos(data.totalMinor)}</span></div>
-                    {showVat && <div className="text-muted mt-1">Prices VAT-inclusive (12%)</div>}
+                    {/* M4: BIR-style VAT breakdown. `showOnReceipt` is display-only — flipping it
+                        on the Settings page only hides these lines, it never changes a total. */}
+                    {showVat && data.vat?.showOnReceipt && data.vat.enabled && (
+                      <div className="mt-2" data-testid="vat-breakdown">
+                        <hr className="my-2" />
+                        <div className="d-flex justify-content-between">
+                          <span>VATable Sales</span>
+                          <span>{pesos(data.vat.vatableMinor)}</span>
+                        </div>
+                        <div className="d-flex justify-content-between">
+                          <span>
+                            VAT {data.vat.pricesIncludeVat ? "(incl.) " : ""}
+                            {(data.vat.rateBp / 100).toFixed(data.vat.rateBp % 100 === 0 ? 0 : 2)}%
+                          </span>
+                          <span>{pesos(data.vat.vatMinor)}</span>
+                        </div>
+                        {data.vat.vatExemptMinor > 0 && (
+                          <div className="d-flex justify-content-between">
+                            <span>VAT-Exempt Sales</span>
+                            <span>{pesos(data.vat.vatExemptMinor)}</span>
+                          </div>
+                        )}
+                        <div className="d-flex justify-content-between">
+                          <span>Zero-Rated Sales</span>
+                          <span>{pesos(0)}</span>
+                        </div>
+                        {data.vat.tin && <div className="text-muted mt-1">TIN {data.vat.tin}</div>}
+                        {data.vat.pricesIncludeVat && (
+                          <div className="text-muted">Prices are VAT-inclusive (BIR)</div>
+                        )}
+                      </div>
+                    )}
                     <hr className="my-2" />
                     {/* M3: what settled the order — one line per tender (label, handed-over, change, ref) */}
                     {data.tenders && (

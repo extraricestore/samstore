@@ -8,6 +8,8 @@ export interface ProductInput {
   categorySlug?: string | null;
   description?: string | null;
   isActive?: boolean;
+  /** M4: a VAT-exempt product (basic/zero-rated goods) — reported as non-VAT sales. */
+  taxExempt?: boolean;
 }
 
 export type ProductValidation = { ok: true } | { ok: false; errors: string[] };

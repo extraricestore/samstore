@@ -17,6 +17,10 @@ export interface StoreRecord {
   deliveryEnabled: boolean;
   pickupEnabled: boolean;
   minOrderAmountMinor: number;
+  // M4 VAT configuration (present on records coming from the store repository).
+  vatEnabled?: boolean;
+  vatRateBp?: number;
+  pricesIncludeVat?: boolean;
   accentColor?: string | null;
   bannerText?: string | null;
   logoUrl?: string | null;
@@ -62,6 +66,11 @@ export interface OrderRecord {
   deliveryFeeMinor: number;
   discountMinor: number;
   totalMinor: number;
+  /** M4: the frozen VAT breakdown — required on writes, defaulted to 0 for legacy readers. */
+  vatableMinor?: number;
+  vatMinor?: number;
+  vatExemptMinor?: number;
+  vatRateBp?: number;
   snapshot: unknown;
   paymentMethod: string;
   paymentStatus: string;
