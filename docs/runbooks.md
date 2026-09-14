@@ -173,6 +173,18 @@ Correction semantics: the ledger is authoritative, so the balance is rewritten T
 - Delivery orders must reach COMPLETED only via courier DELIVERED; pickup/POS via `complete-now`/POS complete. A delivery order forced to COMPLETED is rejected server-side.
 - Claims are single-use and consumed atomically (`updateMany WHERE usedAt IS NULL`).
 
+## Tax / VAT (M4)
+
+- **Operator decisions (locked 2026-09-14):** catalogue prices are **VAT-inclusive** (12% PH, `vatRateBp: 1200`); the store owner may **hide the VAT lines** on the printed slip (`vatShowOnReceipt` + the legacy `showVatLabel` — display only, totals never move); the **delivery fee is not VAT-able**; a voucher/loyalty **discount reduces the VATable base before tax**.
+- **Where the numbers come from:** `apps/api/src/domain/tax.ts` (engine: per-line half-up rounding, exempt lines, discount allocation, delivery exclusion) and `domain/tax-store.ts` (the ONE reader of a store's VAT config + product exemptions used by every order writer).
+- **Frozen columns:** every order carries `vatableMinor`, `vatMinor`, `vatExemptMinor`, `vatRateBp` (migration `20260914011029_module_m4_tax_engine`). Never recompute a receipt from the catalogue — print what the order froze.
+- **The identity to check after any money change:** `vatableMinor + vatMinor + vatExemptMinor == subtotalMinor + deliveryFeeMinor − discountMinor` (inclusive mode) and `… == subtotal + vat + fee − discount` (exclusive). It holds in every mode, kill switch included — a break means a writer stopped freezing the breakdown.
+- **Kill switch:** `vatEnabled = false` (or `vatRateBp = 0`) reproduces the pre-M4 totals exactly — the right first move when a tax figure is disputed.
+- **Owner controls:** Settings → Tax / VAT (rate, inclusive flag, show-on-receipt, TIN); Products → "VAT-exempt product" switch + badge.
+- **Proof on live data:** `node --import tsx scripts/probe-m4-vat.ts` → `PROBE GREEN` (inclusive extraction ₱112 → ₱100 + ₱12; ₱20 voucher → VAT ₱9.86 on the discounted base; ₱50 delivery fee untaxed and reported as non-VAT; hidden VAT keeps the total; kill switch identical totals; cross-tenant receipt 403). Unit contract: `apps/api/src/domain/tax.test.ts` (13 tests).
+- **Regression trap:** a value spread into the in-memory `OrderRecord` is NOT persisted — patch `persistence/repositories.ts` AND both `prisma-repositories.ts` create mappings, then verify by reading the column back.
+
+
 ## Money invariants (do not regress)
 
 - Integer minor units everywhere; server-authoritative totals; signatures required for credit/utang (validate `data:image/`, ≤2M chars).

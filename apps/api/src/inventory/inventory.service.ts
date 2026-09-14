@@ -8,6 +8,7 @@
 
 import { prisma } from "../persistence/prisma-repositories.js";
 import { adjustStock, InsufficientStockError } from "../domain/movements.js";
+import { cacheBust, cacheKey } from "../persistence/ttl-cache.js";
 import type { ApiError } from "@sam-store/contracts";
 
 export const INVENTORY_SERVICE = Symbol("INVENTORY_SERVICE");
@@ -113,6 +114,11 @@ export class InventoryService {
         });
         return out;
       }, { timeout: 30_000 });
+      // M4 fix: the admin products list is cached for 30 s, so without this bust the operator
+      // would adjust stock and keep reading the OLD on-hand for half a minute (the storefront
+      // reads live, which is exactly why the mismatch looked like a storefront bug).
+      cacheBust(cacheKey("products", storeId));
+      cacheBust(cacheKey("inventory", storeId));
       return { ok: true, value: { productId: input.productId, balanceAfter: result.balanceAfter, delta: result.delta } };
     } catch (e) {
       if (e instanceof InsufficientStockError) {

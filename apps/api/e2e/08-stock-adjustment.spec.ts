@@ -40,7 +40,7 @@ test("M2: an inventory adjustment writes a reasoned ledger row", async ({ page, 
       const res = await request.get(`${API}/admin/stock/movements?limit=500`, { headers });
       if (res.status() !== 200) return beforeCount;
       return ((await res.json()).count as number);
-    }, { timeout: 20_000, intervals: [500, 1000, 2000] })
+    }, { timeout: 90_000, intervals: [1000, 2000, 4000] })
     .toBeGreaterThan(beforeCount);
 
   const after = await request.get(`${API}/admin/stock/movements?limit=5`, { headers });

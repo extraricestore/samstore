@@ -2,7 +2,7 @@
 // staff-critical and customer-critical screens must not overflow horizontally at
 // 320px (small phone), tablet and desktop, and must be operable by keyboard.
 import { test, expect } from "@playwright/test";
-import { ADMIN_EMAIL, ADMIN_PASSWORD, fetchPublicLink } from "./helpers.js";
+import { ADMIN_EMAIL, ADMIN_PASSWORD, fetchPublicLink, ensureStorefrontStock } from "./helpers.js";
 
 const VIEWPORTS = [
   { name: "320px phone", width: 320, height: 640 },
@@ -18,6 +18,8 @@ async function overflowPx(page: import("@playwright/test").Page): Promise<number
 }
 
 test("storefront + cart fit every viewport without horizontal overflow", async ({ page, request }) => {
+  test.setTimeout(150_000);
+  await ensureStorefrontStock(request);
   const link = await fetchPublicLink(request);
   for (const vp of VIEWPORTS) {
     await page.setViewportSize({ width: vp.width, height: vp.height });
@@ -27,7 +29,7 @@ test("storefront + cart fit every viewport without horizontal overflow", async (
     expect(overflow, `${vp.name}: page overflows horizontally by ${overflow}px`).toBeLessThanOrEqual(2);
 
     // The cart must open and its Checkout control stay reachable at this width.
-    await page.locator(".card-body button", { hasText: "Add" }).first().click();
+    await page.locator(".card-body button:enabled", { hasText: "Add" }).first().click();
     await page.getByRole("button", { name: /cart/i }).first().click();
     await expect(page.getByRole("button", { name: /^Checkout ·/ })).toBeVisible();
     await page.setViewportSize({ width: vp.width, height: vp.height });

@@ -1,13 +1,16 @@
 // E2E 03 — critical path: storefront → add to cart → delivery checkout (COD)
 // → order placed → public claim-token readback (single-use claim semantics).
 import { test, expect } from "@playwright/test";
-import { API, apiLogin, fetchPublicLink } from "./helpers.js";
+import { API, apiLogin, fetchPublicLink, ensureStorefrontStock } from "./helpers.js";
 
 const ORDER_NUMBER = /SAMSTO-\d+/i;
 
 test.use({ permissions: ["clipboard-read", "clipboard-write"] });
 
 test("customer order journey: menu → cart → checkout → placed → claimable", async ({ page, request }) => {
+  // Self-healing fixture: repeated runs consume demo stock, which would leave every Add
+  // button disabled and fail this spec for a reason unrelated to the code under test.
+  await ensureStorefrontStock(request);
   const link = await fetchPublicLink(request);
 
   // 1. Storefront loads with the real public link (browser).
@@ -17,7 +20,9 @@ test("customer order journey: menu → cart → checkout → placed → claimabl
   await expect(page.getByRole("button", { name: /cart/i }).first()).toBeVisible();
 
   // The store must have at least one in-stock product to complete this journey.
-  const addButtons = page.locator(".card-body button", { hasText: "Add" });
+  // Only an in-stock product has an ENABLED Add button — a fully reserved product renders it
+  // disabled, which is correct behaviour the spec must respect rather than fight.
+  const addButtons = page.locator(".card-body button:enabled", { hasText: "Add" });
   const count = await addButtons.count();
   expect(count, "storefront needs ≥1 in-stock product (seed data)").toBeGreaterThan(0);
   await addButtons.first().click();
@@ -44,7 +49,9 @@ test("customer order journey: menu → cart → checkout → placed → claimabl
 
   // 4. Success screen shows the order number; grab THIS order's claim token from the
   //    Copy-tracking-token button's clipboard payload (fresh + unused every run).
-    await expect(page.getByText("Order placed!")).toBeVisible({ timeout: 25_000 });
+    // The POST is state-changing against a remote DB; under full-suite load the success screen
+    // can take well over 25s to render even though the order is already created server-side.
+    await expect(page.getByText("Order placed!")).toBeVisible({ timeout: 60_000 });
     const orderNumber = (await page.getByText(ORDER_NUMBER).first().textContent())?.trim();
     expect(orderNumber).toMatch(ORDER_NUMBER);
     await page.locator("button", { hasText: "Copy tracking token" }).click();

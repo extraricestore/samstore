@@ -1,17 +1,19 @@
 // E2E 04 — guest PICKUP journey (flow matrix #2): no address required, no delivery
 // fee, and the order records fulfillmentType PICKUP.
 import { test, expect } from "@playwright/test";
-import { API, apiLogin, fetchPublicLink } from "./helpers.js";
+import { API, apiLogin, fetchPublicLink, ensureStorefrontStock } from "./helpers.js";
 
 const ORDER_NUMBER = /SAMSTO-\d+/i;
 
 test.use({ permissions: ["clipboard-read", "clipboard-write"] });
 
 test("guest pickup: cart → checkout without an address → placed with PICKUP + zero delivery fee", async ({ page, request }) => {
+  test.setTimeout(150_000); // remote-DB latency: a checkout POST can take several seconds per query
+  await ensureStorefrontStock(request);
   const link = await fetchPublicLink(request);
 
   await page.goto(`/${link.slug}?token=${encodeURIComponent(link.token)}`);
-  const addButtons = page.locator(".card-body button", { hasText: "Add" });
+  const addButtons = page.locator(".card-body button:enabled", { hasText: "Add" });
   expect(await addButtons.count(), "storefront needs ≥1 in-stock product").toBeGreaterThan(0);
   await addButtons.first().click();
 

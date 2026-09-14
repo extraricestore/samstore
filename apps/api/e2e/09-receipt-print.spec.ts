@@ -104,12 +104,17 @@ test("M3: the receipt shows every tender and prints as a 57 mm slip", async ({ p
   void footerVisible;
   await page.emulateMedia({ media: "screen" });
 
-  // Leave the drawer as we found it (this spec opened a shift for the counter sale).
-  const xRes = await request.get(`${API}/admin/registers/report?kind=x`, { headers });
-  if (xRes.status() === 200) {
-    const expected = (await xRes.json()).report?.session?.live?.expectedMinor;
-    if (typeof expected === "number") {
-      await request.post(`${API}/admin/registers/close`, { headers, data: { countedMinor: expected } });
+  // Leave the drawer as we found it (this spec opened a shift for the counter sale). Wrapped so a
+  // failure above is never masked by teardown noise when the request context is already disposed.
+  try {
+    const xRes = await request.get(`${API}/admin/registers/report?kind=x`, { headers });
+    if (xRes.status() === 200) {
+      const expected = (await xRes.json()).report?.session?.live?.expectedMinor;
+      if (typeof expected === "number") {
+        await request.post(`${API}/admin/registers/close`, { headers, data: { countedMinor: expected } });
+      }
     }
+  } catch {
+    /* the assertion above already reported the real failure */
   }
 });
